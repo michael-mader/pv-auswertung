@@ -56,23 +56,62 @@ if file_smiles and file_everhome:
         if "end_date" not in st.session_state:
             st.session_state.end_date = max_date
 
-        # Dropdown für die Schnellauswahl
+        # Dropdown für die Schnellauswahl mit den neuen Optionen
+        auswahl_optionen = [
+            "Manuell (Kalender nutzen)", 
+            "Gestern",
+            "Letzte 7 Tage", 
+            "Letzte 14 Tage", 
+            "Letzte 30 Tage", 
+            "Aktueller Monat",
+            "Letzter Monat",
+            "Letzte 3 Monate",
+            "Gesamter Zeitraum"
+        ]
+        
         quick_select = st.sidebar.selectbox(
             "Schnellauswahl",
-            ["Manuell (Kalender nutzen)", "Letzte 7 Tage", "Letzte 14 Tage", "Letzte 30 Tage", "Gesamter Zeitraum"],
-            index=4 # Standardmäßig steht es auf "Gesamter Zeitraum"
+            auswahl_optionen,
+            index=8 # Standardmäßig auf "Gesamter Zeitraum"
         )
 
-        # Wenn ein Preset gewählt wurde, berechnen wir die Daten (immer rückwirkend vom aktuellsten Datum im Export)
-        if quick_select == "Letzte 7 Tage":
+        # Wenn ein Preset gewählt wurde, berechnen wir die Daten (referenziert am aktuellsten Datum im Export)
+        if quick_select == "Gestern":
+            gestern = max_date - datetime.timedelta(days=1)
+            st.session_state.start_date = max(min_date, gestern)
+            # Falls "Gestern" vor dem ersten Datenpunkt liegt, fangen wir das ab:
+            st.session_state.end_date = max(min_date, gestern) 
+            
+        elif quick_select == "Letzte 7 Tage":
             st.session_state.start_date = max(min_date, max_date - datetime.timedelta(days=6))
             st.session_state.end_date = max_date
+            
         elif quick_select == "Letzte 14 Tage":
             st.session_state.start_date = max(min_date, max_date - datetime.timedelta(days=13))
             st.session_state.end_date = max_date
+            
         elif quick_select == "Letzte 30 Tage":
             st.session_state.start_date = max(min_date, max_date - datetime.timedelta(days=29))
             st.session_state.end_date = max_date
+            
+        elif quick_select == "Aktueller Monat":
+            start_of_month = max_date.replace(day=1)
+            st.session_state.start_date = max(min_date, start_of_month)
+            st.session_state.end_date = max_date
+            
+        elif quick_select == "Letzter Monat":
+            end_of_last_month = max_date.replace(day=1) - datetime.timedelta(days=1)
+            start_of_last_month = end_of_last_month.replace(day=1)
+            st.session_state.start_date = max(min_date, start_of_last_month)
+            # Enddatum darf das maximale Datum der CSV nicht überschreiten
+            st.session_state.end_date = min(max_date, end_of_last_month)
+            
+        elif quick_select == "Letzte 3 Monate":
+            # pd.DateOffset zieht exakt 3 Monate ab (z.B. 22.07. -> 22.04.)
+            start_3_months = (pd.to_datetime(max_date) - pd.DateOffset(months=3)).date()
+            st.session_state.start_date = max(min_date, start_3_months)
+            st.session_state.end_date = max_date
+            
         elif quick_select == "Gesamter Zeitraum":
             st.session_state.start_date = min_date
             st.session_state.end_date = max_date
@@ -83,14 +122,12 @@ if file_smiles and file_everhome:
             value=(st.session_state.start_date, st.session_state.end_date),
             min_value=min_date,
             max_value=max_date,
-            # Genialer UX-Trick: Wir sperren den Kalender, solange ein Preset aktiv ist!
             disabled=(quick_select != "Manuell (Kalender nutzen)") 
         )
 
         # Abfangen, falls der Nutzer erst ein Startdatum geklickt hat und das Enddatum noch fehlt
         if len(date_selection) == 2:
             start_date, end_date = date_selection
-            # Wenn der User auf "Manuell" ist, speichern wir seine Klicks in den Session State
             if quick_select == "Manuell (Kalender nutzen)":
                 st.session_state.start_date = start_date
                 st.session_state.end_date = end_date
