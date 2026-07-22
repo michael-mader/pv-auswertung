@@ -110,29 +110,49 @@ if file_smiles and file_everhome:
                 marker_color='orange'
             ))
 
-            # Linie für PV-Erzeugung
-            # Die Eigenverbrauchsquote zeigen wir direkt als Text über den Punkten der PV-Linie an
-            text_labels = filtered_df['EVQ_%'].apply(lambda x: f"{x:.0f} %" if x > 0 else "")
-            
+            # Linie für PV-Erzeugung (jetzt OHNE Text, nur Linie und Punkte)
             fig.add_trace(go.Scatter(
                 x=filtered_df['Datum'],
                 y=filtered_df['PV_Erzeugung_Wh']/1000,
                 name='PV Erzeugung (kWh)',
-                mode='lines+markers+text', # Text direkt an den Punkten aktivieren
+                mode='lines+markers',
                 line=dict(color='blue', width=2),
-                marker=dict(size=8),
-                text=text_labels,
-                textposition="top center"
+                marker=dict(size=8)
             ))
 
-            # Layout anpassen (gestapelte Balken, interaktives Hover-Verhalten)
-            max_y = max((filtered_df['Eigenverbrauch_Wh'] + filtered_df['Netzbezug_Wh'])/1000)
+            # Wir berechnen für jeden Tag den höchsten Punkt (entweder Balkenspitze oder PV-Linie)
+            y_max = np.maximum(
+                (filtered_df['Eigenverbrauch_Wh'] + filtered_df['Netzbezug_Wh']) / 1000,
+                filtered_df['PV_Erzeugung_Wh'] / 1000
+            )
+            
+            # HTML <b> macht den Text fett und noch besser lesbar
+            text_labels = filtered_df['EVQ_%'].apply(lambda x: f"<b>{x:.0f} %</b>" if x > 0 else "")
+
+            # Unsichtbarer Layer nur für die Platzierung des Textes
+            fig.add_trace(go.Scatter(
+                x=filtered_df['Datum'],
+                y=y_max,
+                mode='text',
+                text=text_labels,
+                textposition="top center",
+                showlegend=False,  # Taucht nicht in der Legende auf
+                hoverinfo='skip'   # Verhindert, dass dieser Layer den Hover-Effekt stört
+            ))
+
+            # Layout anpassen
+            # (Wir berechnen das absolute Maximum des Graphen für die Y-Achse)
+            max_total = filtered_df['Gesamtverbrauch_Wh'].max()
+            max_pv = filtered_df['PV_Erzeugung_Wh'].max()
+            graph_max = max(max_total, max_pv) / 1000
             
             fig.update_layout(
                 barmode='stack',
                 yaxis_title='Energie (kWh)',
-                yaxis=dict(range=[0, (max_y * 1.15) if max_y > 0 else 1]),
-                hovermode='x unified', # Genial für solche Dashboards: Zeigt beim Drüberfahren alle Werte des Tages in einer Box
+                # Faktor 1.25 statt 1.15 gibt nach oben etwas mehr Luft, 
+                # damit die Prozentzahlen nicht vom Rand abgeschnitten werden
+                yaxis=dict(range=[0, (graph_max * 1.25) if graph_max > 0 else 1]),
+                hovermode='x unified',
                 legend=dict(
                     orientation="h", 
                     yanchor="bottom", 
