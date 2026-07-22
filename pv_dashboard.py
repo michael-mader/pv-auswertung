@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
+import numpy as npimport plotly.graph_objects as go
 import datetime
 
 st.set_page_config(page_title="PV & Stromverbrauch Dashboard", layout="wide")
@@ -89,30 +88,62 @@ if file_smiles and file_everhome:
             col3.metric("Eigenverbrauchsquote", f"{evq:.1f} %")
             col4.metric("Autarkiegrad", f"{autarkie:.1f} %")
 
-            # --- 4. Diagramm zeichnen ---
+            # --- 4. Interaktives Diagramm (Plotly) ---
             st.header("📈 Tagesverlauf")
-            fig, ax = plt.subplots(figsize=(12, 6))
             
-            ax.bar(filtered_df['Datum'], filtered_df['Eigenverbrauch_Wh']/1000, label='Eigenverbrauch (kWh)', color='green')
-            ax.bar(filtered_df['Datum'], filtered_df['Netzbezug_Wh']/1000, bottom=filtered_df['Eigenverbrauch_Wh']/1000, label='Netzbezug (kWh)', color='orange')
-            ax.plot(filtered_df['Datum'], filtered_df['PV_Erzeugung_Wh']/1000, label='PV Erzeugung (kWh)', color='blue', marker='o')
+            fig = go.Figure()
 
-            for i, row in filtered_df.iterrows():
-                if row['PV_Erzeugung_Wh'] > 0:
-                    val = row['EVQ_%']
-                    total_height = (row['Eigenverbrauch_Wh'] + row['Netzbezug_Wh']) / 1000
-                    ax.text(row['Datum'], total_height + 0.3, f"{val:.0f} %", 
-                            ha='center', va='bottom', fontsize=8, 
-                            bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=1))
+            # Balken für Eigenverbrauch (unten)
+            fig.add_trace(go.Bar(
+                x=filtered_df['Datum'],
+                y=filtered_df['Eigenverbrauch_Wh']/1000,
+                name='Eigenverbrauch (kWh)',
+                marker_color='green'
+            ))
+
+            # Balken für Netzbezug (oben drauf gestapelt)
+            fig.add_trace(go.Bar(
+                x=filtered_df['Datum'],
+                y=filtered_df['Netzbezug_Wh']/1000,
+                name='Netzbezug (kWh)',
+                marker_color='orange'
+            ))
+
+            # Linie für PV-Erzeugung
+            # Die Eigenverbrauchsquote zeigen wir direkt als Text über den Punkten der PV-Linie an
+            text_labels = filtered_df['EVQ_%'].apply(lambda x: f"{x:.0f} %" if x > 0 else "")
             
-            ax.set_ylabel("Energie (kWh)")
-            if not filtered_df.empty:
-                max_y = max((filtered_df['Eigenverbrauch_Wh'] + filtered_df['Netzbezug_Wh'])/1000)
-                ax.set_ylim(0, max_y * 1.15 if max_y > 0 else 1)
+            fig.add_trace(go.Scatter(
+                x=filtered_df['Datum'],
+                y=filtered_df['PV_Erzeugung_Wh']/1000,
+                name='PV Erzeugung (kWh)',
+                mode='lines+markers+text', # Text direkt an den Punkten aktivieren
+                line=dict(color='blue', width=2),
+                marker=dict(size=8),
+                text=text_labels,
+                textposition="top center"
+            ))
+
+            # Layout anpassen (gestapelte Balken, interaktives Hover-Verhalten)
+            max_y = max((filtered_df['Eigenverbrauch_Wh'] + filtered_df['Netzbezug_Wh'])/1000)
             
-            ax.legend()
-            plt.xticks(rotation=45)
-            st.pyplot(fig)
+            fig.update_layout(
+                barmode='stack',
+                yaxis_title='Energie (kWh)',
+                yaxis=dict(range=[0, (max_y * 1.15) if max_y > 0 else 1]),
+                hovermode='x unified', # Genial für solche Dashboards: Zeigt beim Drüberfahren alle Werte des Tages in einer Box
+                legend=dict(
+                    orientation="h", 
+                    yanchor="bottom", 
+                    y=1.02, 
+                    xanchor="right", 
+                    x=1
+                ),
+                margin=dict(l=0, r=0, t=40, b=0)
+            )
+
+            # Diagramm in Streamlit rendern
+            st.plotly_chart(fig, use_container_width=True)
 
             # --- 5. Rohdaten anzeigen ---
             with st.expander("Tabelle mit aggregierten Tagesdaten anzeigen"):
