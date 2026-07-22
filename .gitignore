@@ -1,0 +1,9 @@
+# Ignoriere alle CSV und Excel Dateien
+*.csv
+*.xlsx
+*.xls
+
+# Python Caches etc.
+__pycache__/
+*.pyc
+.env
