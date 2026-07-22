@@ -181,11 +181,19 @@ if file_smiles and file_everhome:
             col4.metric("Autarkiegrad", f"{autarkie:.1f} %")
             
             # Zeile 2: Die PV-Statistiken
-            st.markdown("### ☀️ PV-Leistung (Tageswerte)")
-            col_pv1, col_pv2, col_pv3 = st.columns(3)
+            st.markdown("### ☀️ PV-Leistung & Details")
+            
+            # Hier auf 4 Spalten (columns) erhöhen!
+            col_pv1, col_pv2, col_pv3, col_pv4 = st.columns(4)
+            
             col_pv1.metric("Ø Tagesertrag", f"{pv_mean:.2f} kWh")
             col_pv2.metric("Maximaler Tagesertrag", f"{pv_max:.2f} kWh")
             col_pv3.metric("Minimaler Tagesertrag (aktiv)", f"{pv_min:.2f} kWh")
+            col_pv4.metric(
+                label="Netzeinspeisung (Gesamt)", 
+                value=f"{total_einspeisung/1000:.2f} kWh",
+                help="Strom, der ungenutzt ins öffentliche Netz geflossen ist."
+            )
 
             # --- 4. Interaktives Diagramm (Plotly) ---
             st.header("📈 Tagesverlauf")
