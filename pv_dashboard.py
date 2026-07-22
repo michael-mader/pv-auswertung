@@ -71,7 +71,7 @@ if file_smiles and file_everhome:
         if filtered_df.empty:
             st.warning("Für den gewählten Zeitraum sind keine übereinstimmenden Daten vorhanden.")
         else:
-            # --- 3. KPIs berechnen (jetzt basierend auf filtered_df) ---
+            # --- 3. KPIs berechnen (basierend auf filtered_df) ---
             total_pv = filtered_df['PV_Erzeugung_Wh'].sum()
             total_bezug = filtered_df['Netzbezug_Wh'].sum()
             total_einspeisung = filtered_df['Einspeisung_Wh'].sum()
@@ -81,13 +81,30 @@ if file_smiles and file_everhome:
             evq = (total_eigen / total_pv * 100) if total_pv > 0 else 0
             autarkie = (total_eigen / total_verbrauch * 100) if total_verbrauch > 0 else 0
 
-            # UI: KPIs anzeigen
+            # NEU: PV-Statistiken (Tageswerte) berechnen
+            pv_mean = filtered_df['PV_Erzeugung_Wh'].mean() / 1000
+            pv_max = filtered_df['PV_Erzeugung_Wh'].max() / 1000
+            
+            # Für den Minimalwert filtern wir Tage mit 0 Wh heraus
+            active_pv_days = filtered_df[filtered_df['PV_Erzeugung_Wh'] > 0]
+            pv_min = (active_pv_days['PV_Erzeugung_Wh'].min() / 1000) if not active_pv_days.empty else 0
+
+            # --- UI: KPIs anzeigen ---
             st.header("📊 Auswertung für den gewählten Zeitraum")
+            
+            # Zeile 1: Die Haupt-Metriken (Gesamtverbrauch & Quoten)
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric("PV-Erzeugung", f"{total_pv/1000:.2f} kWh")
-            col2.metric("Netzbezug", f"{total_bezug/1000:.2f} kWh")
+            col1.metric("PV-Erzeugung (Gesamt)", f"{total_pv/1000:.2f} kWh")
+            col2.metric("Netzbezug (Gesamt)", f"{total_bezug/1000:.2f} kWh")
             col3.metric("Eigenverbrauchsquote", f"{evq:.1f} %")
             col4.metric("Autarkiegrad", f"{autarkie:.1f} %")
+            
+            # Zeile 2: Die neuen PV-Statistiken
+            st.markdown("### ☀️ PV-Leistung (Tageswerte)")
+            col_pv1, col_pv2, col_pv3 = st.columns(3)
+            col_pv1.metric("Ø Tagesertrag", f"{pv_mean:.2f} kWh")
+            col_pv2.metric("Maximaler Tagesertrag", f"{pv_max:.2f} kWh")
+            col_pv3.metric("Minimaler Tagesertrag (aktiv)", f"{pv_min:.2f} kWh")
 
             # --- 4. Interaktives Diagramm (Plotly) ---
             st.header("📈 Tagesverlauf")
