@@ -96,7 +96,11 @@ if file_smiles and file_everhome:
         # --- UI: Rohdaten anzeigen (optional) ---
         with st.expander("Tabelle mit aggregierten Tagesdaten anzeigen"):
             display_df = merged[['Datum', 'PV_Erzeugung_Wh', 'Netzbezug_Wh', 'Einspeisung_Wh', 'Eigenverbrauch_Wh', 'EVQ_%']].copy()
-            display_df.iloc[:, 1:5] = display_df.iloc[:, 1:5] / 1000 # in kWh umrechnen
+            
+            # Fehlerbehebung: Spalten explizit als Float casten und dann durch 1000 teilen
+            cols_to_convert = ['PV_Erzeugung_Wh', 'Netzbezug_Wh', 'Einspeisung_Wh', 'Eigenverbrauch_Wh']
+            display_df[cols_to_convert] = display_df[cols_to_convert].astype(float) / 1000.0
+            
             display_df.rename(columns=lambda x: x.replace('_Wh', ' (kWh)'), inplace=True)
             st.dataframe(display_df, use_container_width=True)
 
