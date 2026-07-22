@@ -19,7 +19,7 @@ strompreis_ct = st.sidebar.number_input(
     "Strompreis (ct/kWh)", 
     min_value=0.0, 
     max_value=100.0, 
-    value=28.34, 
+    value=28.32, 
     step=0.01,
     format="%.2f"
 )
