@@ -92,25 +92,22 @@ if file_smiles and file_everhome:
             # --- UI: KPIs anzeigen ---
             st.header("📊 Auswertung für den gewählten Zeitraum")
             
-            # Zeile 1: Die Haupt-Metriken (Auf 5 Spalten erweitert für die Ersparnis)
-            col1, col2, col3, col4, col5 = st.columns(5)
+            # Zeile 1: Die Haupt-Metriken (wieder auf 4 Spalten aufgeteilt)
+            col1, col2, col3, col4 = st.columns(4)
             
             col1.metric("PV-Erzeugung (Gesamt)", f"{total_pv/1000:.2f} kWh")
             
-            # Theoretischer Bezug, wenn es keine PV-Anlage gäbe (entspricht dem Gesamtverbrauch)
-            col2.metric("Bezug ohne PV (Fiktiv)", f"{total_verbrauch/1000:.2f} kWh")
-            
             # Streamlit's Delta-Funktion zeigt die Ersparnis durch den Eigenverbrauch perfekt an.
             # delta_color="inverse" macht den Pfeil nach unten (weniger Bezug) grün.
-            col3.metric(
+            col2.metric(
                 label="Tatsächlicher Netzbezug", 
                 value=f"{total_bezug/1000:.2f} kWh", 
                 delta=f"-{total_eigen/1000:.2f} kWh (Ersparnis)", 
                 delta_color="inverse"
             )
             
-            col4.metric("Eigenverbrauchsquote", f"{evq:.1f} %")
-            col5.metric("Autarkiegrad", f"{autarkie:.1f} %")
+            col3.metric("Eigenverbrauchsquote", f"{evq:.1f} %")
+            col4.metric("Autarkiegrad", f"{autarkie:.1f} %")
             
             # Zeile 2: Die PV-Statistiken
             st.markdown("### ☀️ PV-Leistung (Tageswerte)")
