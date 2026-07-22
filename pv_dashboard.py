@@ -50,21 +50,55 @@ if file_smiles and file_everhome:
         min_date = merged['Datum'].min().date()
         max_date = merged['Datum'].max().date()
 
+        # Session State initialisieren, damit die App sich die manuellen Werte merkt
+        if "start_date" not in st.session_state:
+            st.session_state.start_date = min_date
+        if "end_date" not in st.session_state:
+            st.session_state.end_date = max_date
+
+        # Dropdown für die Schnellauswahl
+        quick_select = st.sidebar.selectbox(
+            "Schnellauswahl",
+            ["Manuell (Kalender nutzen)", "Letzte 7 Tage", "Letzte 14 Tage", "Letzte 30 Tage", "Gesamter Zeitraum"],
+            index=4 # Standardmäßig steht es auf "Gesamter Zeitraum"
+        )
+
+        # Wenn ein Preset gewählt wurde, berechnen wir die Daten (immer rückwirkend vom aktuellsten Datum im Export)
+        if quick_select == "Letzte 7 Tage":
+            st.session_state.start_date = max(min_date, max_date - datetime.timedelta(days=6))
+            st.session_state.end_date = max_date
+        elif quick_select == "Letzte 14 Tage":
+            st.session_state.start_date = max(min_date, max_date - datetime.timedelta(days=13))
+            st.session_state.end_date = max_date
+        elif quick_select == "Letzte 30 Tage":
+            st.session_state.start_date = max(min_date, max_date - datetime.timedelta(days=29))
+            st.session_state.end_date = max_date
+        elif quick_select == "Gesamter Zeitraum":
+            st.session_state.start_date = min_date
+            st.session_state.end_date = max_date
+
+        # Der eigentliche Kalender
         date_selection = st.sidebar.date_input(
-            "Zeitraum auswählen",
-            value=(min_date, max_date),
+            "Datum auswählen",
+            value=(st.session_state.start_date, st.session_state.end_date),
             min_value=min_date,
-            max_value=max_date
+            max_value=max_date,
+            # Genialer UX-Trick: Wir sperren den Kalender, solange ein Preset aktiv ist!
+            disabled=(quick_select != "Manuell (Kalender nutzen)") 
         )
 
         # Abfangen, falls der Nutzer erst ein Startdatum geklickt hat und das Enddatum noch fehlt
         if len(date_selection) == 2:
             start_date, end_date = date_selection
+            # Wenn der User auf "Manuell" ist, speichern wir seine Klicks in den Session State
+            if quick_select == "Manuell (Kalender nutzen)":
+                st.session_state.start_date = start_date
+                st.session_state.end_date = end_date
         else:
             start_date = date_selection[0]
             end_date = date_selection[0]
 
-        # DataFrame anhand des Kalenders filtern
+        # DataFrame anhand des ermittelten Zeitraums filtern
         mask = (merged['Datum'].dt.date >= start_date) & (merged['Datum'].dt.date <= end_date)
         filtered_df = merged.loc[mask]
 
