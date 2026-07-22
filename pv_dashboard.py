@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-import numpy as npimport plotly.graph_objects as go
+import numpy as np
+import plotly.graph_objects as go
 import datetime
 
 st.set_page_config(page_title="PV & Stromverbrauch Dashboard", layout="wide")
