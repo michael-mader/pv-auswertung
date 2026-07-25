@@ -19,7 +19,7 @@ strompreis_ct = st.sidebar.number_input(
     "Strompreis (ct/kWh)", 
     min_value=0.0, 
     max_value=100.0, 
-    value=28.32, 
+    value=28.34, 
     step=0.01,
     format="%.2f"
 )
@@ -36,15 +36,26 @@ if file_smiles and file_everhome:
             
         df_smiles['Datum'] = pd.to_datetime(df_smiles['Datum'], errors='coerce')
 
-        # Everhome Daten
+        # Everhome Daten (Robust für Web- und App-Export mit unterschiedlichen Trennern)
         df_everhome = pd.read_csv(file_everhome, sep=None, engine='python')
+        
+        # Falls Spalten andere Namen haben sollten, fangen wir das hier universell ab
+        col_bezug = 'Differenz Bezug' if 'Differenz Bezug' in df_everhome.columns else [c for c in df_everhome.columns if 'Bezug' in c][0]
+        col_einspeisung = 'Differenz Einspeisung' if 'Differenz Einspeisung' in df_everhome.columns else [c for c in df_everhome.columns if 'Einspeisung' in c][0]
+
         df_everhome['Datetime'] = pd.to_datetime(df_everhome['Datum'] + ' ' + df_everhome['Uhrzeit'], format='%d.%m.%Y %H:%M:%S', errors='coerce')
         df_everhome['Datum'] = pd.to_datetime(df_everhome['Datetime'].dt.date)
 
         daily_everhome = df_everhome.groupby('Datum').agg({
-            'Differenz Bezug': 'sum',
-            'Differenz Einspeisung': 'sum'
+            col_bezug: 'sum',
+            col_einspeisung: 'sum'
         }).reset_index()
+
+        # Spalten für die Weiterverarbeitung einheitlich benennen
+        daily_everhome.rename(columns={
+            col_bezug: 'Differenz Bezug',
+            col_einspeisung: 'Differenz Einspeisung'
+        }, inplace=True)
 
         # Zusammenführen
         merged = pd.merge(daily_everhome, df_smiles, on='Datum', how='inner')
@@ -192,8 +203,6 @@ if file_smiles and file_everhome:
             col_pv1.metric("Ø Tagesertrag", f"{pv_mean:.2f} kWh")
             col_pv2.metric("Maximaler Tagesertrag", f"{pv_max:.2f} kWh")
             col_pv3.metric("Minimaler Tagesertrag (aktiv)", f"{pv_min:.2f} kWh")
-            
-            # Hier ist nun die finanzielle Ersparnis als vierte Kachel platziert
             col_pv4.metric(
                 label="Geldwerte Ersparnis", 
                 value=f"{ersparnis_euro:.2f} €",
