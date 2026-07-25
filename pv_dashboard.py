@@ -27,8 +27,8 @@ strompreis_ct = st.sidebar.number_input(
 if file_smiles and file_everhome:
     try:
         # --- 1. Datenaufbereitung ---
-        # S-Miles Daten
-        df_smiles = pd.read_csv(file_smiles)
+        # S-Miles Daten (Robust gegen abweichende Spaltennamen)
+        df_smiles = pd.read_csv(file_smiles, sep=None, engine='python')
         if ' ' in df_smiles.columns:
             df_smiles.rename(columns={' ': 'Datum'}, inplace=True)
         elif df_smiles.columns[0] != 'Datum': 
@@ -36,10 +36,12 @@ if file_smiles and file_everhome:
             
         df_smiles['Datum'] = pd.to_datetime(df_smiles['Datum'], errors='coerce')
 
+        # Finde die Ertrags-Spalte automatisch (egal ob 'Ertrag (Wh)' oder ähnlich)
+        col_ertrag = 'Ertrag (Wh)' if 'Ertrag (Wh)' in df_smiles.columns else [c for c in df_smiles.columns if 'Ertrag' in c or 'Wh' in c][0]
+
         # Everhome Daten (Robust für Web- und App-Export mit unterschiedlichen Trennern)
         df_everhome = pd.read_csv(file_everhome, sep=None, engine='python')
         
-        # Falls Spalten andere Namen haben sollten, fangen wir das hier universell ab
         col_bezug = 'Differenz Bezug' if 'Differenz Bezug' in df_everhome.columns else [c for c in df_everhome.columns if 'Bezug' in c][0]
         col_einspeisung = 'Differenz Einspeisung' if 'Differenz Einspeisung' in df_everhome.columns else [c for c in df_everhome.columns if 'Einspeisung' in c][0]
 
@@ -51,7 +53,6 @@ if file_smiles and file_everhome:
             col_einspeisung: 'sum'
         }).reset_index()
 
-        # Spalten für die Weiterverarbeitung einheitlich benennen
         daily_everhome.rename(columns={
             col_bezug: 'Differenz Bezug',
             col_einspeisung: 'Differenz Einspeisung'
@@ -61,7 +62,7 @@ if file_smiles and file_everhome:
         merged = pd.merge(daily_everhome, df_smiles, on='Datum', how='inner')
 
         # Werte berechnen
-        merged['PV_Erzeugung_Wh'] = merged['Ertrag (Wh)']
+        merged['PV_Erzeugung_Wh'] = merged[col_ertrag]
         merged['Netzbezug_Wh'] = merged['Differenz Bezug']
         merged['Einspeisung_Wh'] = merged['Differenz Einspeisung']
         merged['Eigenverbrauch_Wh'] = merged.apply(lambda row: max(0, row['PV_Erzeugung_Wh'] - row['Einspeisung_Wh']), axis=1)
