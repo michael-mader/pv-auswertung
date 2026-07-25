@@ -12,14 +12,14 @@ st.sidebar.header("Daten Upload")
 file_smiles = st.sidebar.file_uploader("S-Miles Cloud Export (CSV)", type=['csv'])
 file_everhome = st.sidebar.file_uploader("Everhome Export (CSV)", type=['csv'])
 
-# Konfiguration für den Strompreis in der Seitenleiste
+# Konfiguration für den Strompreis in der Seitenleiste (auf 28.32 ct/kWh angepasst)
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Finanzielle Einstellungen")
 strompreis_ct = st.sidebar.number_input(
     "Strompreis (ct/kWh)", 
     min_value=0.0, 
     max_value=100.0, 
-    value=28.34, 
+    value=28.32, 
     step=0.01,
     format="%.2f"
 )
@@ -27,16 +27,16 @@ strompreis_ct = st.sidebar.number_input(
 if file_smiles and file_everhome:
     try:
         # --- 1. Datenaufbereitung ---
+        # S-Miles Daten direkt über Spalten-Index einlesen (Spalte 0 = Datum, Spalte 1 = Ertrag)
         df_smiles = pd.read_csv(file_smiles, sep=None, engine='python')
-        if ' ' in df_smiles.columns:
-            df_smiles.rename(columns={' ': 'Datum'}, inplace=True)
-        elif df_smiles.columns[0] != 'Datum': 
-            df_smiles.rename(columns={df_smiles.columns[0]: 'Datum'}, inplace=True)
+        df_smiles = df_smiles.iloc[:, [0, 1]]
+        df_smiles.columns = ['Datum', 'Ertrag_Wh']
             
         df_smiles['Datum'] = pd.to_datetime(df_smiles['Datum'], errors='coerce').dt.date
-        col_ertrag = 'Ertrag (Wh)' if 'Ertrag (Wh)' in df_smiles.columns else [c for c in df_smiles.columns if 'Ertrag' in c or 'Wh' in c][0]
 
+        # Everhome Daten einlesen
         df_everhome = pd.read_csv(file_everhome, sep=None, engine='python')
+        
         col_bezug = 'Differenz Bezug' if 'Differenz Bezug' in df_everhome.columns else [c for c in df_everhome.columns if 'Bezug' in c][0]
         col_einspeisung = 'Differenz Einspeisung' if 'Differenz Einspeisung' in df_everhome.columns else [c for c in df_everhome.columns if 'Einspeisung' in c][0]
 
@@ -56,14 +56,14 @@ if file_smiles and file_everhome:
         daily_everhome['Datum'] = pd.to_datetime(daily_everhome['Datum']).dt.date
         df_smiles['Datum'] = pd.to_datetime(df_smiles['Datum']).dt.date
 
-        # Zusammenführen
+        # Zusammenführen über das Datum
         merged = pd.merge(daily_everhome, df_smiles, on='Datum', how='inner')
 
         # Wieder zurück zu datetime für die Filterung
         merged['Datum'] = pd.to_datetime(merged['Datum'])
 
         # Werte berechnen
-        merged['PV_Erzeugung_Wh'] = merged[col_ertrag]
+        merged['PV_Erzeugung_Wh'] = merged['Ertrag_Wh']
         merged['Netzbezug_Wh'] = merged['Differenz Bezug']
         merged['Einspeisung_Wh'] = merged['Differenz Einspeisung']
         merged['Eigenverbrauch_Wh'] = merged.apply(lambda row: max(0, row['PV_Erzeugung_Wh'] - row['Einspeisung_Wh']), axis=1)
