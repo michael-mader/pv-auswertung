@@ -9,6 +9,7 @@ st.set_page_config(page_title="PV & Stromverbrauch Dashboard", layout="wide")
 st.title("☀️ Interaktives PV & Stromverbrauch Dashboard (MongoDB)")
 
 # --- MongoDB Verbindung aufbauen ---
+# WICHTIG: Erfordert ein st.secrets["mongo"]["uri"] in den Streamlit Secrets!
 @st.cache_resource
 def init_connection():
     return MongoClient(st.secrets["mongo"]["uri"])
@@ -22,6 +23,80 @@ st.sidebar.header("Daten Upload")
 file_smiles = st.sidebar.file_uploader("S-Miles Cloud Export (CSV)", type=['csv'])
 file_everhome = st.sidebar.file_uploader("Everhome Export (CSV)", type=['csv'])
 
+# Button zum Importieren der hochgeladenen Dateien
+if file_smiles or file_everhome:
+    if st.sidebar.button("⬇️ Daten in Datenbank importieren"):
+        with st.spinner("Daten werden verarbeitet und in MongoDB gespeichert..."):
+            try:
+                upload_dict = {}
+
+                # 1. S-Miles verarbeiten
+                if file_smiles:
+                    file_smiles.seek(0) # Zurücksetzen, falls die Datei mehrmals gelesen wird
+                    df_smiles = pd.read_csv(file_smiles, sep=None, engine='python')
+                    df_smiles = df_smiles.iloc[:, [0, 1]]
+                    df_smiles.columns = ['Datum', 'Ertrag_Wh']
+                    df_smiles['Datum'] = pd.to_datetime(df_smiles['Datum'], errors='coerce').dt.date
+                    
+                    for _, row in df_smiles.dropna(subset=['Datum']).iterrows():
+                        d_str = row['Datum'].strftime('%Y-%m-%d')
+                        val = row['Ertrag_Wh']
+                        if pd.notna(val):
+                            if d_str not in upload_dict:
+                                upload_dict[d_str] = {}
+                            upload_dict[d_str]['PV_Erzeugung_Wh'] = float(val)
+
+                # 2. Everhome verarbeiten
+                if file_everhome:
+                    file_everhome.seek(0)
+                    df_everhome = pd.read_csv(file_everhome, sep=None, engine='python')
+                    
+                    # Spalten robust finden
+                    col_bezug = 'Differenz Bezug' if 'Differenz Bezug' in df_everhome.columns else [c for c in df_everhome.columns if 'Bezug' in c][0]
+                    col_einspeisung = 'Differenz Einspeisung' if 'Differenz Einspeisung' in df_everhome.columns else [c for c in df_everhome.columns if 'Einspeisung' in c][0]
+
+                    df_everhome['Datetime'] = pd.to_datetime(df_everhome['Datum'] + ' ' + df_everhome['Uhrzeit'], format='%d.%m.%Y %H:%M:%S', errors='coerce')
+                    df_everhome['Datum'] = df_everhome['Datetime'].dt.date
+
+                    daily_everhome = df_everhome.groupby('Datum').agg({
+                        col_bezug: 'sum',
+                        col_einspeisung: 'sum'
+                    }).reset_index()
+
+                    for _, row in daily_everhome.dropna(subset=['Datum']).iterrows():
+                        d_str = row['Datum'].strftime('%Y-%m-%d')
+                        b_val = row[col_bezug]
+                        e_val = row[col_einspeisung]
+                        
+                        if d_str not in upload_dict:
+                            upload_dict[d_str] = {}
+                        if pd.notna(b_val):
+                            upload_dict[d_str]['Netzbezug_Wh'] = float(b_val)
+                        if pd.notna(e_val):
+                            upload_dict[d_str]['Einspeisung_Wh'] = float(e_val)
+
+                # 3. In MongoDB schreiben (Neuer Wert überschreibt alten, außer er ist 0 oder None)
+                for d_str, fields in upload_dict.items():
+                    existing_doc = collection.find_one({"_id": d_str}) or {}
+                    update_data = {}
+                    
+                    for field, new_val in fields.items():
+                        if new_val is not None and new_val != 0:
+                            update_data[field] = new_val
+                        elif field not in existing_doc or existing_doc.get(field) is None:
+                            update_data[field] = new_val
+
+                    if update_data:
+                        collection.update_one(
+                            {"_id": d_str},
+                            {"$set": update_data},
+                            upsert=True
+                        )
+                st.sidebar.success("Daten erfolgreich in MongoDB aktualisiert!")
+
+            except Exception as e:
+                st.sidebar.error(f"Fehler beim Importieren: {e}")
+
 # Konfiguration für den Strompreis in der Seitenleiste
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Finanzielle Einstellungen")
@@ -34,78 +109,7 @@ strompreis_ct = st.sidebar.number_input(
     format="%.2f"
 )
 
-# --- NEUE DATEN IN MONGODB SPEICHERN (FALLS HOCHGELADEN) ---
-if file_smiles or file_everhome:
-    try:
-        # Zwischenspeicher für temporär verarbeitete Tagesdaten dieses Uploads
-        upload_dict = {}
-
-        # 1. S-Miles verarbeiten
-        if file_smiles:
-            df_smiles = pd.read_csv(file_smiles, sep=None, engine='python')
-            df_smiles = df_smiles.iloc[:, [0, 1]]
-            df_smiles.columns = ['Datum', 'Ertrag_Wh']
-            df_smiles['Datum'] = pd.to_datetime(df_smiles['Datum'], errors='coerce').dt.date
-            
-            for _, row in df_smiles.dropna(subset=['Datum']).iterrows():
-                d_str = row['Datum'].strftime('%Y-%m-%d')
-                val = row['Ertrag_Wh']
-                if pd.notna(val):
-                    if d_str not in upload_dict:
-                        upload_dict[d_str] = {}
-                    upload_dict[d_str]['PV_Erzeugung_Wh'] = float(val)
-
-        # 2. Everhome verarbeiten
-        if file_everhome:
-            df_everhome = pd.read_csv(file_everhome, sep=None, engine='python')
-            col_bezug = 'Differenz Bezug' if 'Differenz Bezug' in df_everhome.columns else [c for c in df_everhome.columns if 'Bezug' in c][0]
-            col_einspeisung = 'Differenz Einspeisung' if 'Differenz Einspeisung' in df_everhome.columns else [c for c in df_everhome.columns if 'Einspeisung' in c][0]
-
-            df_everhome['Datetime'] = pd.to_datetime(df_everhome['Datum'] + ' ' + df_everhome['Uhrzeit'], format='%d.%m.%Y %H:%M:%S', errors='coerce')
-            df_everhome['Datum'] = df_everhome['Datetime'].dt.date
-
-            daily_everhome = df_everhome.groupby('Datum').agg({
-                col_bezug: 'sum',
-                col_einspeisung: 'sum'
-            }).reset_index()
-
-            for _, row in daily_everhome.dropna(subset=['Datum']).iterrows():
-                d_str = row['Datum'].strftime('%Y-%m-%d')
-                b_val = row[col_bezug]
-                e_val = row[col_einspeisung]
-                
-                if d_str not in upload_dict:
-                    upload_dict[d_str] = {}
-                if pd.notna(b_val):
-                    upload_dict[d_str]['Netzbezug_Wh'] = float(b_val)
-                if pd.notna(e_val):
-                    upload_dict[d_str]['Einspeisung_Wh'] = float(e_val)
-
-        # 3. In MongoDB schreiben (mit Logik: Neuer Wert überschreibt alten, außer er ist 0 / None)
-        for d_str, fields in upload_dict.items():
-            existing_doc = collection.find_one({"_id": d_str}) or {}
-            update_data = {}
-            
-            for field, new_val in fields.items():
-                # Nur überschreiben, wenn neuer Wert nicht 0 oder None ist, 
-                # oder wenn noch gar kein Wert in der DB existiert
-                if new_val is not None and new_val != 0:
-                    update_data[field] = new_val
-                elif field not in existing_doc or existing_doc.get(field) is None:
-                    update_data[field] = new_val
-
-            if update_data:
-                collection.update_one(
-                    {"_id": d_str},
-                    {"$set": update_data},
-                    upsert=True
-                )
-        st.sidebar.success("Daten erfolgreich in MongoDB aktualisiert!")
-
-    except Exception as e:
-        st.sidebar.error(f"Fehler beim Importieren: {e}")
-
-# --- DATEN AUS MONGODB LADEN ---
+# --- DATEN AUS MONGODB LADEN UND ANZEIGEN ---
 cursor = collection.find({})
 data_list = []
 for doc in cursor:
@@ -116,7 +120,7 @@ for doc in cursor:
     data_list.append(row)
 
 if not data_list:
-    st.info("👈 Bislang sind keine Daten in der Datenbank vorhanden. Bitte lade mindestens eine S-Miles oder Everhome CSV-Datei in der Seitenleiste hoch.")
+    st.info("👈 Bislang sind keine Daten in der Datenbank vorhanden. Bitte lade CSV-Dateien hoch und klicke auf 'Importieren'.")
 else:
     merged = pd.DataFrame(data_list)
     merged['Datum'] = pd.to_datetime(merged['Datum'])
