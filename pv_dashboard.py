@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import datetime
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateOne
 
 st.set_page_config(page_title="PV & Stromverbrauch Dashboard", layout="wide")
 st.title("☀️ Interaktives PV & Stromverbrauch Dashboard (MongoDB)")
@@ -34,6 +34,7 @@ if file_smiles or file_everhome:
                 if file_smiles:
                     file_smiles.seek(0) # Zurücksetzen, falls die Datei mehrmals gelesen wird
                     df_smiles = pd.read_csv(file_smiles, sep=None, engine='python')
+                    # Robustes Einlesen über Index, egal wie die Spalte genau heißt oder ob Leerzeichen drin sind
                     df_smiles = df_smiles.iloc[:, [0, 1]]
                     df_smiles.columns = ['Datum', 'Ertrag_Wh']
                     df_smiles['Datum'] = pd.to_datetime(df_smiles['Datum'], errors='coerce').dt.date
@@ -75,24 +76,42 @@ if file_smiles or file_everhome:
                         if pd.notna(e_val):
                             upload_dict[d_str]['Einspeisung_Wh'] = float(e_val)
 
-                # 3. In MongoDB schreiben (Neuer Wert überschreibt alten, außer er ist 0 oder None)
-                for d_str, fields in upload_dict.items():
-                    existing_doc = collection.find_one({"_id": d_str}) or {}
-                    update_data = {}
-                    
-                    for field, new_val in fields.items():
-                        if new_val is not None and new_val != 0:
-                            update_data[field] = new_val
-                        elif field not in existing_doc or existing_doc.get(field) is None:
-                            update_data[field] = new_val
+                # 3. In MongoDB schreiben (Batch-Update für maximale Geschwindigkeit)
+                date_keys = list(upload_dict.keys())
+                
+                if date_keys:
+                    # Lese alle bereits existierenden Tage auf EINMAL aus der Datenbank
+                    existing_docs_cursor = collection.find({"_id": {"$in": date_keys}})
+                    existing_docs = {doc["_id"]: doc for doc in existing_docs_cursor}
 
-                    if update_data:
-                        collection.update_one(
-                            {"_id": d_str},
-                            {"$set": update_data},
-                            upsert=True
-                        )
-                st.sidebar.success("Daten erfolgreich in MongoDB aktualisiert!")
+                    bulk_operations = []
+
+                    for d_str, fields in upload_dict.items():
+                        existing_doc = existing_docs.get(d_str, {})
+                        update_data = {}
+                        
+                        for field, new_val in fields.items():
+                            # Nur überschreiben, wenn neuer Wert nicht 0 oder None ist, 
+                            # oder wenn noch gar kein Wert in der DB existiert
+                            if new_val is not None and new_val != 0:
+                                update_data[field] = new_val
+                            elif field not in existing_doc or existing_doc.get(field) is None:
+                                update_data[field] = new_val
+
+                        if update_data:
+                            bulk_operations.append(
+                                UpdateOne(
+                                    {"_id": d_str},
+                                    {"$set": update_data},
+                                    upsert=True
+                                )
+                            )
+
+                    # Schreibe alle gesammelten Operationen mit einem einzigen Befehl in die Datenbank
+                    if bulk_operations:
+                        collection.bulk_write(bulk_operations)
+                        
+                st.sidebar.success("Daten extrem schnell in MongoDB aktualisiert!")
 
             except Exception as e:
                 st.sidebar.error(f"Fehler beim Importieren: {e}")
