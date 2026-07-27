@@ -18,7 +18,9 @@ client = init_connection()
 db = client["pv_dashboard_db"]
 collection = db["tageswerte"]
 
-# Seitenleiste für die Uploads & Filter
+# ==========================================
+# SEITENLEISTE: DATEN UPLOAD & IMPORT
+# ==========================================
 st.sidebar.header("Daten Upload")
 file_smiles = st.sidebar.file_uploader("S-Miles Cloud Export (CSV)", type=['csv'])
 file_everhome = st.sidebar.file_uploader("Everhome Export (CSV)", type=['csv'])
@@ -32,9 +34,8 @@ if file_smiles or file_everhome:
 
                 # 1. S-Miles verarbeiten
                 if file_smiles:
-                    file_smiles.seek(0) # Zurücksetzen, falls die Datei mehrmals gelesen wird
+                    file_smiles.seek(0)
                     df_smiles = pd.read_csv(file_smiles, sep=None, engine='python')
-                    # Robustes Einlesen über Index, egal wie die Spalte genau heißt oder ob Leerzeichen drin sind
                     df_smiles = df_smiles.iloc[:, [0, 1]]
                     df_smiles.columns = ['Datum', 'Ertrag_Wh']
                     df_smiles['Datum'] = pd.to_datetime(df_smiles['Datum'], errors='coerce').dt.date
@@ -52,7 +53,6 @@ if file_smiles or file_everhome:
                     file_everhome.seek(0)
                     df_everhome = pd.read_csv(file_everhome, sep=None, engine='python')
                     
-                    # Spalten robust finden
                     col_bezug = 'Differenz Bezug' if 'Differenz Bezug' in df_everhome.columns else [c for c in df_everhome.columns if 'Bezug' in c][0]
                     col_einspeisung = 'Differenz Einspeisung' if 'Differenz Einspeisung' in df_everhome.columns else [c for c in df_everhome.columns if 'Einspeisung' in c][0]
 
@@ -76,11 +76,10 @@ if file_smiles or file_everhome:
                         if pd.notna(e_val):
                             upload_dict[d_str]['Einspeisung_Wh'] = float(e_val)
 
-                # 3. In MongoDB schreiben (Batch-Update für maximale Geschwindigkeit)
+                # 3. In MongoDB schreiben (Batch-Update)
                 date_keys = list(upload_dict.keys())
                 
                 if date_keys:
-                    # Lese alle bereits existierenden Tage auf EINMAL aus der Datenbank
                     existing_docs_cursor = collection.find({"_id": {"$in": date_keys}})
                     existing_docs = {doc["_id"]: doc for doc in existing_docs_cursor}
 
@@ -91,8 +90,6 @@ if file_smiles or file_everhome:
                         update_data = {}
                         
                         for field, new_val in fields.items():
-                            # Nur überschreiben, wenn neuer Wert nicht 0 oder None ist, 
-                            # oder wenn noch gar kein Wert in der DB existiert
                             if new_val is not None and new_val != 0:
                                 update_data[field] = new_val
                             elif field not in existing_doc or existing_doc.get(field) is None:
@@ -107,7 +104,6 @@ if file_smiles or file_everhome:
                                 )
                             )
 
-                    # Schreibe alle gesammelten Operationen mit einem einzigen Befehl in die Datenbank
                     if bulk_operations:
                         collection.bulk_write(bulk_operations)
                         
@@ -116,19 +112,9 @@ if file_smiles or file_everhome:
             except Exception as e:
                 st.sidebar.error(f"Fehler beim Importieren: {e}")
 
-# Konfiguration für den Strompreis in der Seitenleiste
-st.sidebar.markdown("---")
-st.sidebar.header("⚙️ Finanzielle Einstellungen")
-strompreis_ct = st.sidebar.number_input(
-    "Strompreis (ct/kWh)", 
-    min_value=0.0, 
-    max_value=100.0, 
-    value=28.32, 
-    step=0.01,
-    format="%.2f"
-)
-
-# --- DATEN AUS MONGODB LADEN UND ANZEIGEN ---
+# ==========================================
+# DATEN AUS MONGODB LADEN
+# ==========================================
 cursor = collection.find({})
 data_list = []
 for doc in cursor:
@@ -141,17 +127,21 @@ for doc in cursor:
 if not data_list:
     st.info("👈 Bislang sind keine Daten in der Datenbank vorhanden. Bitte lade CSV-Dateien hoch und klicke auf 'Importieren'.")
 else:
+    # Datenaufbereitung
     merged = pd.DataFrame(data_list)
     merged['Datum'] = pd.to_datetime(merged['Datum'])
     merged = merged.sort_values('Datum').reset_index(drop=True)
 
-    # Werte berechnen
     merged['Eigenverbrauch_Wh'] = merged.apply(lambda row: max(0, row['PV_Erzeugung_Wh'] - row['Einspeisung_Wh']), axis=1)
     merged['Gesamtverbrauch_Wh'] = merged['Netzbezug_Wh'] + merged['Eigenverbrauch_Wh']
     merged['EVQ_%'] = np.where(merged['PV_Erzeugung_Wh'] > 0, (merged['Eigenverbrauch_Wh'] / merged['PV_Erzeugung_Wh']) * 100, 0)
 
-    # --- Interaktiver Datumsfilter ---
-    st.sidebar.header("Zeitraum Filter")
+    # ==========================================
+    # SEITENLEISTE: ZEITRAUM FILTER (NACH OBEN VERSCHOBEN)
+    # ==========================================
+    st.sidebar.markdown("---")
+    st.sidebar.header("🗓️ Zeitraum Filter")
+    
     min_date = merged['Datum'].min().date()
     max_date = merged['Datum'].max().date()
 
@@ -165,7 +155,7 @@ else:
         "Gestern",
         "Letzte 7 Tage", 
         "Letzte 14 Tage", 
-        "Letzte 30 Tage", 
+        "Letzte 30 Tage", # Index 4 (Standard)
         "Aktueller Monat",
         "Letzter Monat",
         "Letzte 3 Monate",
@@ -175,7 +165,7 @@ else:
     quick_select = st.sidebar.selectbox(
         "Schnellauswahl",
         auswahl_optionen,
-        index=8
+        index=4 # Standardmäßig Letzte 30 Tage
     )
 
     if quick_select == "Gestern":
@@ -225,9 +215,27 @@ else:
         start_date = date_selection[0]
         end_date = date_selection[0]
 
+    # Daten filtern
     mask = (merged['Datum'].dt.date >= start_date) & (merged['Datum'].dt.date <= end_date)
     filtered_df = merged.loc[mask]
 
+    # ==========================================
+    # SEITENLEISTE: STROMPREIS (NACH UNTEN VERSCHOBEN)
+    # ==========================================
+    st.sidebar.markdown("---")
+    st.sidebar.header("⚙️ Finanzielle Einstellungen")
+    strompreis_ct = st.sidebar.number_input(
+        "Strompreis (ct/kWh)", 
+        min_value=0.0, 
+        max_value=100.0, 
+        value=28.32, 
+        step=0.01,
+        format="%.2f"
+    )
+
+    # ==========================================
+    # HAUPTBEREICH: DASHBOARD ANZEIGEN
+    # ==========================================
     if filtered_df.empty:
         st.warning("Für den gewählten Zeitraum sind keine Daten in der Datenbank vorhanden.")
     else:
