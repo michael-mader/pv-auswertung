@@ -24,7 +24,6 @@ st.sidebar.header("Daten Upload")
 file_smiles = st.sidebar.file_uploader("S-Miles Cloud Export (CSV)", type=['csv'])
 file_everhome = st.sidebar.file_uploader("Everhome Export (CSV)", type=['csv'])
 
-# Button zum Importieren der hochgeladenen Dateien
 if file_smiles or file_everhome:
     if st.sidebar.button("⬇️ Daten in Datenbank importieren"):
         with st.spinner("Daten werden verarbeitet und in MongoDB gespeichert..."):
@@ -154,18 +153,14 @@ else:
         "Gestern",
         "Letzte 7 Tage", 
         "Letzte 14 Tage", 
-        "Letzte 30 Tage", # Index 4 (Standard)
+        "Letzte 30 Tage", 
         "Aktueller Monat",
         "Letzter Monat",
         "Letzte 3 Monate",
         "Gesamter Zeitraum"
     ]
     
-    quick_select = st.sidebar.selectbox(
-        "Schnellauswahl",
-        auswahl_optionen,
-        index=4
-    )
+    quick_select = st.sidebar.selectbox("Schnellauswahl", auswahl_optionen, index=4)
 
     if quick_select == "Gestern":
         gestern = max_date - datetime.timedelta(days=1)
@@ -219,17 +214,16 @@ else:
     filtered_df = merged.loc[mask]
 
     # ==========================================
-    # SEITENLEISTE: STROMPREIS
+    # SEITENLEISTE: FINANZEN & AMORTISATION
     # ==========================================
     st.sidebar.markdown("---")
     st.sidebar.header("⚙️ Finanzielle Einstellungen")
     strompreis_ct = st.sidebar.number_input(
-        "Strompreis (ct/kWh)", 
-        min_value=0.0, 
-        max_value=100.0, 
-        value=28.32, 
-        step=0.01,
-        format="%.2f"
+        "Strompreis (ct/kWh)", min_value=0.0, max_value=100.0, value=28.32, step=0.01, format="%.2f"
+    )
+    
+    investitionskosten = st.sidebar.number_input(
+        "Anschaffungskosten Anlage (€)", min_value=0.0, value=800.0, step=50.0, format="%.2f"
     )
 
     # ==========================================
@@ -238,6 +232,7 @@ else:
     if filtered_df.empty:
         st.warning("Für den gewählten Zeitraum sind keine Daten in der Datenbank vorhanden.")
     else:
+        # Metriken für Zeitraum
         total_pv = filtered_df['PV_Erzeugung_Wh'].sum()
         total_bezug = filtered_df['Netzbezug_Wh'].sum()
         total_einspeisung = filtered_df['Einspeisung_Wh'].sum()
@@ -254,16 +249,11 @@ else:
         active_pv_days = filtered_df[filtered_df['PV_Erzeugung_Wh'] > 0]
         pv_min = (active_pv_days['PV_Erzeugung_Wh'].min() / 1000) if not active_pv_days.empty else 0
 
-        st.header("📊 Auswertung für den gewählten Zeitraum")
+        st.header(f"📊 Auswertung ({start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')})")
         
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("PV-Erzeugung (Gesamt)", f"{total_pv/1000:.2f} kWh")
-        col2.metric(
-            label="Tatsächlicher Netzbezug", 
-            value=f"{total_bezug/1000:.2f} kWh", 
-            delta=f"-{total_eigen/1000:.2f} kWh (Ersparnis)", 
-            delta_color="inverse"
-        )
+        col2.metric("Tatsächlicher Netzbezug", f"{total_bezug/1000:.2f} kWh", f"-{total_eigen/1000:.2f} kWh (Ersparnis)", delta_color="inverse")
         col3.metric("Eigenverbrauchsquote", f"{evq:.1f} %")
         col4.metric("Autarkiegrad", f"{autarkie:.1f} %")
         
@@ -272,21 +262,14 @@ else:
         col_pv1.metric("Ø Tagesertrag", f"{pv_mean:.2f} kWh")
         col_pv2.metric("Maximaler Tagesertrag", f"{pv_max:.2f} kWh")
         col_pv3.metric("Minimaler Tagesertrag (aktiv)", f"{pv_min:.2f} kWh")
-        col_pv4.metric(
-            label="Geldwerte Ersparnis", 
-            value=f"{ersparnis_euro:.2f} €",
-            help=f"Basiert auf deinem Eigenverbrauch von {total_eigen/1000:.2f} kWh multipliziert mit {strompreis_ct:.2f} ct/kWh."
-        )
+        col_pv4.metric("Ersparnis im Zeitraum", f"{ersparnis_euro:.2f} €")
 
-        # NEU: Jahres-Prognose
-        st.markdown("### 🔮 Jahres-Prognose (basierend auf Auswahl)")
-        
-        # Berechnung der Durchschnitte
+        # Prognose
+        st.markdown("### 🔮 Jahres-Prognose (basierend auf Zeitraum)")
         avg_daily_verbrauch = filtered_df['Gesamtverbrauch_Wh'].mean() / 1000
         avg_daily_eigen = filtered_df['Eigenverbrauch_Wh'].mean() / 1000
         avg_daily_ersparnis = avg_daily_eigen * (strompreis_ct / 100)
         
-        # Hochrechnung auf 365 Tage
         forecast_verbrauch = avg_daily_verbrauch * 365
         forecast_ersparnis = avg_daily_ersparnis * 365
         
@@ -296,26 +279,78 @@ else:
         col_f3.metric("Ø PV-Ersparnis / Tag", f"{avg_daily_ersparnis:.2f} €")
         col_f4.metric("Prognose Ersparnis / Jahr", f"{forecast_ersparnis:.2f} €")
 
-        st.header("📈 Tagesverlauf")
+        # ==========================================
+        # NEU: AMORTISATION (ROI) BERECHNUNG
+        # ==========================================
+        st.markdown("---")
+        st.header("💰 Amortisation / Return on Investment")
+        
+        # Die Amortisation berechnen wir auf Basis ALLER Daten in der DB, nicht nur dem gefilterten Zeitraum
+        lifetime_eigen_wh = merged['Eigenverbrauch_Wh'].sum()
+        lifetime_ersparnis = (lifetime_eigen_wh / 1000) * (strompreis_ct / 100)
+        
+        if investitionskosten > 0:
+            roi_percent = (lifetime_ersparnis / investitionskosten) * 100
+            
+            col_r1, col_r2, col_r3 = st.columns(3)
+            col_r1.metric("Anschaffungskosten", f"{investitionskosten:.2f} €")
+            col_r2.metric("Historische Gesamtersparnis", f"{lifetime_ersparnis:.2f} €")
+            col_r3.metric("Amortisiert", f"{roi_percent:.1f} %")
+            
+            # Progress bar deckeln auf 100% (1.0), sonst gibt Streamlit einen Fehler
+            st.progress(min(roi_percent / 100.0, 1.0))
+            
+            if roi_percent >= 100:
+                st.success(f"🎉 Glückwunsch! Deine Anlage hat sich komplett amortisiert und bereits **{lifetime_ersparnis - investitionskosten:.2f} €** reinen Gewinn erwirtschaftet!")
+            else:
+                rest = investitionskosten - lifetime_ersparnis
+                st.info(f"Es fehlen noch **{rest:.2f} €**, bis sich die Anlage vollständig bezahlt gemacht hat.")
+        else:
+            st.info("Trage links in der Seitenleiste deine Anschaffungskosten (> 0 €) ein, um den Fortschritt zu sehen.")
+
+        # ==========================================
+        # CHART MIT AGGREGATION
+        # ==========================================
+        st.markdown("---")
+        st.header("📈 Verlauf")
+        
+        agg_option = st.radio("Ansicht aggregieren:", ["Täglich", "Wöchentlich", "Monatlich"], horizontal=True)
+        
+        chart_df = filtered_df.copy()
+        
+        # Daten aggregieren falls gewünscht
+        if agg_option != "Täglich":
+            chart_df.set_index('Datum', inplace=True)
+            if agg_option == "Wöchentlich":
+                # 'W-MON' = Woche beginnt am Montag
+                chart_df = chart_df.resample('W-MON').sum().reset_index()
+            elif agg_option == "Monatlich":
+                # 'ME' = Month End (Monatsende)
+                chart_df = chart_df.resample('ME').sum().reset_index()
+            
+            # EVQ und Gesamtverbrauch für die aggregierten Zeiträume neu berechnen
+            chart_df['EVQ_%'] = np.where(chart_df['PV_Erzeugung_Wh'] > 0, (chart_df['Eigenverbrauch_Wh'] / chart_df['PV_Erzeugung_Wh']) * 100, 0)
+            chart_df['Gesamtverbrauch_Wh'] = chart_df['Netzbezug_Wh'] + chart_df['Eigenverbrauch_Wh']
+
         fig = go.Figure()
 
         fig.add_trace(go.Bar(
-            x=filtered_df['Datum'],
-            y=filtered_df['Eigenverbrauch_Wh']/1000,
+            x=chart_df['Datum'],
+            y=chart_df['Eigenverbrauch_Wh']/1000,
             name='Eigenverbrauch (kWh)',
             marker_color='green'
         ))
 
         fig.add_trace(go.Bar(
-            x=filtered_df['Datum'],
-            y=filtered_df['Netzbezug_Wh']/1000,
+            x=chart_df['Datum'],
+            y=chart_df['Netzbezug_Wh']/1000,
             name='Netzbezug (kWh)',
             marker_color='orange'
         ))
 
         fig.add_trace(go.Scatter(
-            x=filtered_df['Datum'],
-            y=filtered_df['PV_Erzeugung_Wh']/1000,
+            x=chart_df['Datum'],
+            y=chart_df['PV_Erzeugung_Wh']/1000,
             name='PV Erzeugung (kWh)',
             mode='lines+markers',
             line=dict(color='blue', width=2),
@@ -323,14 +358,14 @@ else:
         ))
 
         y_max = np.maximum(
-            (filtered_df['Eigenverbrauch_Wh'] + filtered_df['Netzbezug_Wh']) / 1000,
-            filtered_df['PV_Erzeugung_Wh'] / 1000
+            (chart_df['Eigenverbrauch_Wh'] + chart_df['Netzbezug_Wh']) / 1000,
+            chart_df['PV_Erzeugung_Wh'] / 1000
         )
         
-        text_labels = filtered_df['EVQ_%'].apply(lambda x: f"<b>{x:.0f} %</b>" if x > 0 else "")
+        text_labels = chart_df['EVQ_%'].apply(lambda x: f"<b>{x:.0f} %</b>" if x > 0 else "")
 
         fig.add_trace(go.Scatter(
-            x=filtered_df['Datum'],
+            x=chart_df['Datum'],
             y=y_max,
             mode='text',
             text=text_labels,
@@ -339,9 +374,9 @@ else:
             hoverinfo='skip'
         ))
 
-        max_total = filtered_df['Gesamtverbrauch_Wh'].max()
-        max_pv = filtered_df['PV_Erzeugung_Wh'].max()
-        graph_max = max(max_total, max_pv) / 1000
+        max_total = chart_df['Gesamtverbrauch_Wh'].max()
+        max_pv = chart_df['PV_Erzeugung_Wh'].max()
+        graph_max = max(max_total, max_pv) / 1000 if not chart_df.empty else 1
         
         fig.update_layout(
             barmode='stack',
@@ -360,8 +395,8 @@ else:
 
         st.plotly_chart(fig, use_container_width=True)
 
-        with st.expander("Tabelle mit aggregierten Tagesdaten anzeigen"):
-            display_df = filtered_df[['Datum', 'PV_Erzeugung_Wh', 'Netzbezug_Wh', 'Einspeisung_Wh', 'Eigenverbrauch_Wh', 'EVQ_%']].copy()
+        with st.expander("Tabelle mit Daten anzeigen"):
+            display_df = chart_df[['Datum', 'PV_Erzeugung_Wh', 'Netzbezug_Wh', 'Einspeisung_Wh', 'Eigenverbrauch_Wh', 'EVQ_%']].copy()
             cols_to_convert = ['PV_Erzeugung_Wh', 'Netzbezug_Wh', 'Einspeisung_Wh', 'Eigenverbrauch_Wh']
             display_df[cols_to_convert] = display_df[cols_to_convert].astype(float) / 1000.0
             display_df.rename(columns=lambda x: x.replace('_Wh', ' (kWh)'), inplace=True)
