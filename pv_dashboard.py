@@ -9,7 +9,6 @@ st.set_page_config(page_title="PV & Stromverbrauch Dashboard", layout="wide")
 st.title("☀️ Interaktives PV & Stromverbrauch Dashboard (MongoDB)")
 
 # --- MongoDB Verbindung aufbauen ---
-# WICHTIG: Erfordert ein st.secrets["mongo"]["uri"] in den Streamlit Secrets!
 @st.cache_resource
 def init_connection():
     return MongoClient(st.secrets["mongo"]["uri"])
@@ -137,7 +136,7 @@ else:
     merged['EVQ_%'] = np.where(merged['PV_Erzeugung_Wh'] > 0, (merged['Eigenverbrauch_Wh'] / merged['PV_Erzeugung_Wh']) * 100, 0)
 
     # ==========================================
-    # SEITENLEISTE: ZEITRAUM FILTER (NACH OBEN VERSCHOBEN)
+    # SEITENLEISTE: ZEITRAUM FILTER
     # ==========================================
     st.sidebar.markdown("---")
     st.sidebar.header("🗓️ Zeitraum Filter")
@@ -165,7 +164,7 @@ else:
     quick_select = st.sidebar.selectbox(
         "Schnellauswahl",
         auswahl_optionen,
-        index=4 # Standardmäßig Letzte 30 Tage
+        index=4
     )
 
     if quick_select == "Gestern":
@@ -220,7 +219,7 @@ else:
     filtered_df = merged.loc[mask]
 
     # ==========================================
-    # SEITENLEISTE: STROMPREIS (NACH UNTEN VERSCHOBEN)
+    # SEITENLEISTE: STROMPREIS
     # ==========================================
     st.sidebar.markdown("---")
     st.sidebar.header("⚙️ Finanzielle Einstellungen")
@@ -278,6 +277,24 @@ else:
             value=f"{ersparnis_euro:.2f} €",
             help=f"Basiert auf deinem Eigenverbrauch von {total_eigen/1000:.2f} kWh multipliziert mit {strompreis_ct:.2f} ct/kWh."
         )
+
+        # NEU: Jahres-Prognose
+        st.markdown("### 🔮 Jahres-Prognose (basierend auf Auswahl)")
+        
+        # Berechnung der Durchschnitte
+        avg_daily_verbrauch = filtered_df['Gesamtverbrauch_Wh'].mean() / 1000
+        avg_daily_eigen = filtered_df['Eigenverbrauch_Wh'].mean() / 1000
+        avg_daily_ersparnis = avg_daily_eigen * (strompreis_ct / 100)
+        
+        # Hochrechnung auf 365 Tage
+        forecast_verbrauch = avg_daily_verbrauch * 365
+        forecast_ersparnis = avg_daily_ersparnis * 365
+        
+        col_f1, col_f2, col_f3, col_f4 = st.columns(4)
+        col_f1.metric("Ø Stromverbrauch / Tag", f"{avg_daily_verbrauch:.2f} kWh")
+        col_f2.metric("Prognose Verbrauch / Jahr", f"{forecast_verbrauch:.0f} kWh")
+        col_f3.metric("Ø PV-Ersparnis / Tag", f"{avg_daily_ersparnis:.2f} €")
+        col_f4.metric("Prognose Ersparnis / Jahr", f"{forecast_ersparnis:.2f} €")
 
         st.header("📈 Tagesverlauf")
         fig = go.Figure()
