@@ -16,6 +16,7 @@ def init_connection():
 client = init_connection()
 db = client["pv_dashboard_db"]
 collection = db["tageswerte"]
+settings_collection = db["settings"]
 
 # ==========================================
 # SEITENLEISTE: DATEN UPLOAD & IMPORT
@@ -209,22 +210,36 @@ else:
         start_date = date_selection[0]
         end_date = date_selection[0]
 
-    # Daten filtern
     mask = (merged['Datum'].dt.date >= start_date) & (merged['Datum'].dt.date <= end_date)
     filtered_df = merged.loc[mask]
 
     # ==========================================
-    # SEITENLEISTE: FINANZEN & AMORTISATION
+    # SEITENLEISTE: FINANZEN 
     # ==========================================
     st.sidebar.markdown("---")
     st.sidebar.header("⚙️ Finanzielle Einstellungen")
+    
+    settings_doc = settings_collection.find_one({"_id": "app_finanzen"}) or {}
+    saved_strompreis = settings_doc.get("strompreis_ct", 28.32)
+    saved_invest = settings_doc.get("investitionskosten", 800.0)
+    
     strompreis_ct = st.sidebar.number_input(
-        "Strompreis (ct/kWh)", min_value=0.0, max_value=100.0, value=28.32, step=0.01, format="%.2f"
+        "Strompreis (ct/kWh)", min_value=0.0, max_value=100.0, value=float(saved_strompreis), step=0.01, format="%.2f"
     )
     
     investitionskosten = st.sidebar.number_input(
-        "Anschaffungskosten Anlage (€)", min_value=0.0, value=800.0, step=50.0, format="%.2f"
+        "Anschaffungskosten Anlage (€)", min_value=0.0, value=float(saved_invest), step=50.0, format="%.2f"
     )
+    
+    if strompreis_ct != saved_strompreis or investitionskosten != saved_invest:
+        settings_collection.update_one(
+            {"_id": "app_finanzen"},
+            {"$set": {
+                "strompreis_ct": strompreis_ct,
+                "investitionskosten": investitionskosten
+            }},
+            upsert=True
+        )
 
     # ==========================================
     # HAUPTBEREICH: DASHBOARD ANZEIGEN
@@ -232,7 +247,6 @@ else:
     if filtered_df.empty:
         st.warning("Für den gewählten Zeitraum sind keine Daten in der Datenbank vorhanden.")
     else:
-        # Metriken für Zeitraum
         total_pv = filtered_df['PV_Erzeugung_Wh'].sum()
         total_bezug = filtered_df['Netzbezug_Wh'].sum()
         total_einspeisung = filtered_df['Einspeisung_Wh'].sum()
@@ -264,7 +278,6 @@ else:
         col_pv3.metric("Minimaler Tagesertrag (aktiv)", f"{pv_min:.2f} kWh")
         col_pv4.metric("Ersparnis im Zeitraum", f"{ersparnis_euro:.2f} €")
 
-        # Prognose
         st.markdown("### 🔮 Jahres-Prognose (basierend auf Zeitraum)")
         avg_daily_verbrauch = filtered_df['Gesamtverbrauch_Wh'].mean() / 1000
         avg_daily_eigen = filtered_df['Eigenverbrauch_Wh'].mean() / 1000
@@ -280,35 +293,6 @@ else:
         col_f4.metric("Prognose Ersparnis / Jahr", f"{forecast_ersparnis:.2f} €")
 
         # ==========================================
-        # NEU: AMORTISATION (ROI) BERECHNUNG
-        # ==========================================
-        st.markdown("---")
-        st.header("💰 Amortisation / Return on Investment")
-        
-        # Die Amortisation berechnen wir auf Basis ALLER Daten in der DB, nicht nur dem gefilterten Zeitraum
-        lifetime_eigen_wh = merged['Eigenverbrauch_Wh'].sum()
-        lifetime_ersparnis = (lifetime_eigen_wh / 1000) * (strompreis_ct / 100)
-        
-        if investitionskosten > 0:
-            roi_percent = (lifetime_ersparnis / investitionskosten) * 100
-            
-            col_r1, col_r2, col_r3 = st.columns(3)
-            col_r1.metric("Anschaffungskosten", f"{investitionskosten:.2f} €")
-            col_r2.metric("Historische Gesamtersparnis", f"{lifetime_ersparnis:.2f} €")
-            col_r3.metric("Amortisiert", f"{roi_percent:.1f} %")
-            
-            # Progress bar deckeln auf 100% (1.0), sonst gibt Streamlit einen Fehler
-            st.progress(min(roi_percent / 100.0, 1.0))
-            
-            if roi_percent >= 100:
-                st.success(f"🎉 Glückwunsch! Deine Anlage hat sich komplett amortisiert und bereits **{lifetime_ersparnis - investitionskosten:.2f} €** reinen Gewinn erwirtschaftet!")
-            else:
-                rest = investitionskosten - lifetime_ersparnis
-                st.info(f"Es fehlen noch **{rest:.2f} €**, bis sich die Anlage vollständig bezahlt gemacht hat.")
-        else:
-            st.info("Trage links in der Seitenleiste deine Anschaffungskosten (> 0 €) ein, um den Fortschritt zu sehen.")
-
-        # ==========================================
         # CHART MIT AGGREGATION
         # ==========================================
         st.markdown("---")
@@ -318,17 +302,13 @@ else:
         
         chart_df = filtered_df.copy()
         
-        # Daten aggregieren falls gewünscht
         if agg_option != "Täglich":
             chart_df.set_index('Datum', inplace=True)
             if agg_option == "Wöchentlich":
-                # 'W-MON' = Woche beginnt am Montag
                 chart_df = chart_df.resample('W-MON').sum().reset_index()
             elif agg_option == "Monatlich":
-                # 'ME' = Month End (Monatsende)
                 chart_df = chart_df.resample('ME').sum().reset_index()
             
-            # EVQ und Gesamtverbrauch für die aggregierten Zeiträume neu berechnen
             chart_df['EVQ_%'] = np.where(chart_df['PV_Erzeugung_Wh'] > 0, (chart_df['Eigenverbrauch_Wh'] / chart_df['PV_Erzeugung_Wh']) * 100, 0)
             chart_df['Gesamtverbrauch_Wh'] = chart_df['Netzbezug_Wh'] + chart_df['Eigenverbrauch_Wh']
 
@@ -402,3 +382,30 @@ else:
             display_df.rename(columns=lambda x: x.replace('_Wh', ' (kWh)'), inplace=True)
             display_df['Datum'] = display_df['Datum'].dt.strftime('%d.%m.%Y')
             st.dataframe(display_df, use_container_width=True)
+
+        # ==========================================
+        # AMORTISATION GANZ UNTEN
+        # ==========================================
+        st.markdown("---")
+        st.header("💰 Amortisation / Return on Investment")
+        
+        lifetime_eigen_wh = merged['Eigenverbrauch_Wh'].sum()
+        lifetime_ersparnis = (lifetime_eigen_wh / 1000) * (strompreis_ct / 100)
+        
+        if investitionskosten > 0:
+            roi_percent = (lifetime_ersparnis / investitionskosten) * 100
+            
+            col_r1, col_r2, col_r3 = st.columns(3)
+            col_r1.metric("Anschaffungskosten", f"{investitionskosten:.2f} €")
+            col_r2.metric("Historische Gesamtersparnis", f"{lifetime_ersparnis:.2f} €")
+            col_r3.metric("Amortisiert", f"{roi_percent:.1f} %")
+            
+            st.progress(min(roi_percent / 100.0, 1.0))
+            
+            if roi_percent >= 100:
+                st.success(f"🎉 Glückwunsch! Deine Anlage hat sich komplett amortisiert und bereits **{lifetime_ersparnis - investitionskosten:.2f} €** reinen Gewinn erwirtschaftet!")
+            else:
+                rest = investitionskosten - lifetime_ersparnis
+                st.info(f"Es fehlen noch **{rest:.2f} €**, bis sich die Anlage vollständig bezahlt gemacht hat.")
+        else:
+            st.info("Trage links in der Seitenleiste deine Anschaffungskosten (> 0 €) ein, um den Fortschritt zu sehen.")
