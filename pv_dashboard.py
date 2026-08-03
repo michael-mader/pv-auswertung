@@ -134,6 +134,7 @@ else:
     merged['Eigenverbrauch_Wh'] = merged.apply(lambda row: max(0, row['PV_Erzeugung_Wh'] - row['Einspeisung_Wh']), axis=1)
     merged['Gesamtverbrauch_Wh'] = merged['Netzbezug_Wh'] + merged['Eigenverbrauch_Wh']
     merged['EVQ_%'] = np.where(merged['PV_Erzeugung_Wh'] > 0, (merged['Eigenverbrauch_Wh'] / merged['PV_Erzeugung_Wh']) * 100, 0)
+    merged['Autarkie_%'] = np.where(merged['Gesamtverbrauch_Wh'] > 0, (merged['Eigenverbrauch_Wh'] / merged['Gesamtverbrauch_Wh']) * 100, 0)
 
     # ==========================================
     # SEITENLEISTE: ZEITRAUM FILTER
@@ -293,12 +294,16 @@ else:
         col_f4.metric("Prognose Ersparnis / Jahr", f"{forecast_ersparnis:.2f} €")
 
         # ==========================================
-        # CHART MIT AGGREGATION
+        # CHART MIT AGGREGATION & LABEL-AUSWAHL
         # ==========================================
         st.markdown("---")
         st.header("📈 Verlauf")
         
-        agg_option = st.radio("Ansicht aggregieren:", ["Täglich", "Wöchentlich", "Monatlich"], horizontal=True)
+        col_agg, col_label = st.columns(2)
+        with col_agg:
+            agg_option = st.radio("Ansicht aggregieren:", ["Täglich", "Wöchentlich", "Monatlich"], horizontal=True)
+        with col_label:
+            label_option = st.radio("Beschriftung im Diagramm:", ["Eigenverbrauchsquote (EVQ)", "Autarkiegrad"], horizontal=True)
         
         chart_df = filtered_df.copy()
         
@@ -309,11 +314,14 @@ else:
             elif agg_option == "Monatlich":
                 chart_df = chart_df.resample('ME').sum().reset_index()
             
-            chart_df['EVQ_%'] = np.where(chart_df['PV_Erzeugung_Wh'] > 0, (chart_df['Eigenverbrauch_Wh'] / chart_df['PV_Erzeugung_Wh']) * 100, 0)
+            # Quoten für aggregierte Zeiträume neu berechnen
             chart_df['Gesamtverbrauch_Wh'] = chart_df['Netzbezug_Wh'] + chart_df['Eigenverbrauch_Wh']
+            chart_df['EVQ_%'] = np.where(chart_df['PV_Erzeugung_Wh'] > 0, (chart_df['Eigenverbrauch_Wh'] / chart_df['PV_Erzeugung_Wh']) * 100, 0)
+            chart_df['Autarkie_%'] = np.where(chart_df['Gesamtverbrauch_Wh'] > 0, (chart_df['Eigenverbrauch_Wh'] / chart_df['Gesamtverbrauch_Wh']) * 100, 0)
 
         fig = go.Figure()
 
+        # 1. Positiver Balken: Eigenverbrauch (Grün)
         fig.add_trace(go.Bar(
             x=chart_df['Datum'],
             y=chart_df['Eigenverbrauch_Wh']/1000,
@@ -321,13 +329,25 @@ else:
             marker_color='green'
         ))
 
+        # 2. Positiver Balken (darauf gestapelt): Netzbezug (Orange)
         fig.add_trace(go.Bar(
             x=chart_df['Datum'],
             y=chart_df['Netzbezug_Wh']/1000,
             name='Netzbezug (kWh)',
             marker_color='orange'
         ))
+        
+        # 3. Negativer Balken (nach unten gestapelt): Einspeisung (Gold)
+        fig.add_trace(go.Bar(
+            x=chart_df['Datum'],
+            y=-chart_df['Einspeisung_Wh']/1000,
+            name='Einspeisung (kWh)',
+            marker_color='gold',
+            customdata=chart_df['Einspeisung_Wh']/1000,
+            hovertemplate='%{customdata:.2f} kWh' # Zeigt beim Hovern den positiven Wert an
+        ))
 
+        # 4. Linie: PV Erzeugung (Blau)
         fig.add_trace(go.Scatter(
             x=chart_df['Datum'],
             y=chart_df['PV_Erzeugung_Wh']/1000,
@@ -342,8 +362,12 @@ else:
             chart_df['PV_Erzeugung_Wh'] / 1000
         )
         
-        text_labels = chart_df['EVQ_%'].apply(lambda x: f"<b>{x:.0f} %</b>" if x > 0 else "")
+        if label_option == "Eigenverbrauchsquote (EVQ)":
+            text_labels = chart_df['EVQ_%'].apply(lambda x: f"<b>{x:.0f} %</b>" if x > 0 else "")
+        else:
+            text_labels = chart_df['Autarkie_%'].apply(lambda x: f"<b>{x:.0f} %</b>" if x > 0 else "")
 
+        # Labels oben auf den positiven Balken
         fig.add_trace(go.Scatter(
             x=chart_df['Datum'],
             y=y_max,
@@ -354,14 +378,18 @@ else:
             hoverinfo='skip'
         ))
 
+        # Y-Achsen Skalierung berechnen (jetzt auch in den negativen Bereich)
         max_total = chart_df['Gesamtverbrauch_Wh'].max()
         max_pv = chart_df['PV_Erzeugung_Wh'].max()
-        graph_max = max(max_total, max_pv) / 1000 if not chart_df.empty else 1
+        graph_max_y = max(max_total, max_pv) / 1000 if not chart_df.empty else 1
+        
+        max_einspeisung = chart_df['Einspeisung_Wh'].max() / 1000 if not chart_df.empty else 0
+        graph_min_y = -max_einspeisung * 1.1 if max_einspeisung > 0 else 0
         
         fig.update_layout(
-            barmode='stack',
+            barmode='relative', # 'relative' stapelt Positive Werte nach oben, Negative nach unten
             yaxis_title='Energie (kWh)',
-            yaxis=dict(range=[0, (graph_max * 1.25) if graph_max > 0 else 1]),
+            yaxis=dict(range=[graph_min_y, (graph_max_y * 1.25) if graph_max_y > 0 else 1]),
             hovermode='x unified',
             legend=dict(
                 orientation="h", 
@@ -376,7 +404,7 @@ else:
         st.plotly_chart(fig, use_container_width=True)
 
         with st.expander("Tabelle mit Daten anzeigen"):
-            display_df = chart_df[['Datum', 'PV_Erzeugung_Wh', 'Netzbezug_Wh', 'Einspeisung_Wh', 'Eigenverbrauch_Wh', 'EVQ_%']].copy()
+            display_df = chart_df[['Datum', 'PV_Erzeugung_Wh', 'Netzbezug_Wh', 'Einspeisung_Wh', 'Eigenverbrauch_Wh', 'EVQ_%', 'Autarkie_%']].copy()
             cols_to_convert = ['PV_Erzeugung_Wh', 'Netzbezug_Wh', 'Einspeisung_Wh', 'Eigenverbrauch_Wh']
             display_df[cols_to_convert] = display_df[cols_to_convert].astype(float) / 1000.0
             display_df.rename(columns=lambda x: x.replace('_Wh', ' (kWh)'), inplace=True)
