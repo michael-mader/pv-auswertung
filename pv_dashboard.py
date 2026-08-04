@@ -261,7 +261,8 @@ else:
         pv_mean = filtered_df['PV_Erzeugung_Wh'].mean() / 1000
         pv_max = filtered_df['PV_Erzeugung_Wh'].max() / 1000
         
-        active_pv_days = filtered_df[filtered_df['PV_Erzeugung_Wh'] > 0]
+        # Hier wird sichergestellt, dass nur Werte > 10 Wh für das Minimum herangezogen werden
+        active_pv_days = filtered_df[filtered_df['PV_Erzeugung_Wh'] > 10]
         pv_min = (active_pv_days['PV_Erzeugung_Wh'].min() / 1000) if not active_pv_days.empty else 0
 
         st.header(f"📊 Auswertung ({start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')})")
@@ -344,7 +345,7 @@ else:
             name='Einspeisung (kWh)',
             marker_color='gold',
             customdata=chart_df['Einspeisung_Wh']/1000,
-            hovertemplate='%{customdata:.2f} kWh' # Zeigt beim Hovern den positiven Wert an
+            hovertemplate='%{customdata:.2f} kWh' 
         ))
 
         # 4. Linie: PV Erzeugung (Blau)
@@ -378,7 +379,7 @@ else:
             hoverinfo='skip'
         ))
 
-        # Y-Achsen Skalierung berechnen (jetzt auch in den negativen Bereich)
+        # Y-Achsen Skalierung berechnen
         max_total = chart_df['Gesamtverbrauch_Wh'].max()
         max_pv = chart_df['PV_Erzeugung_Wh'].max()
         graph_max_y = max(max_total, max_pv) / 1000 if not chart_df.empty else 1
@@ -387,7 +388,7 @@ else:
         graph_min_y = -max_einspeisung * 1.1 if max_einspeisung > 0 else 0
         
         fig.update_layout(
-            barmode='relative', # 'relative' stapelt Positive Werte nach oben, Negative nach unten
+            barmode='relative', 
             yaxis_title='Energie (kWh)',
             yaxis=dict(range=[graph_min_y, (graph_max_y * 1.25) if graph_max_y > 0 else 1]),
             hovermode='x unified',
