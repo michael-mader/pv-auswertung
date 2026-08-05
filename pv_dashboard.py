@@ -261,7 +261,6 @@ else:
         pv_mean = filtered_df['PV_Erzeugung_Wh'].mean() / 1000
         pv_max = filtered_df['PV_Erzeugung_Wh'].max() / 1000
         
-        # Hier wird sichergestellt, dass nur Werte > 10 Wh für das Minimum herangezogen werden
         active_pv_days = filtered_df[filtered_df['PV_Erzeugung_Wh'] > 10]
         pv_min = (active_pv_days['PV_Erzeugung_Wh'].min() / 1000) if not active_pv_days.empty else 0
 
@@ -356,6 +355,17 @@ else:
             mode='lines+markers',
             line=dict(color='blue', width=2),
             marker=dict(size=8)
+        ))
+
+        # 5. Unsichtbarer Trace nur für den Hover-Tooltip: Gesamtverbrauch
+        fig.add_trace(go.Scatter(
+            x=chart_df['Datum'],
+            y=chart_df['Gesamtverbrauch_Wh']/1000,
+            name='Gesamtverbrauch',
+            mode='lines',
+            line=dict(color='rgba(0,0,0,0)'), # Macht die Linie unsichtbar
+            showlegend=False,                 # Versteckt den Eintrag in der Legende
+            hovertemplate='%{y:.2f} kWh'
         ))
 
         y_max = np.maximum(
