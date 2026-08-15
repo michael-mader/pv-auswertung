@@ -52,8 +52,9 @@ if file_smiles or file_everhome:
                     file_everhome.seek(0)
                     df_everhome = pd.read_csv(file_everhome, sep=None, engine='python')
                     
-                    col_bezug = 'Differenz Bezug' if 'Differenz Bezug' in df_everhome.columns else [c for c in df_everhome.columns if 'Bezug' in c][0]
-                    col_einspeisung = 'Differenz Einspeisung' if 'Differenz Einspeisung' in df_everhome.columns else [c for c in df_everhome.columns if 'Einspeisung' in c][0]
+                    # Korrigierte, robuste Spaltensuche für Differenz-Werte
+                    col_bezug = next((c for c in df_everhome.columns if 'Differenz Bezug' in c), [c for c in df_everhome.columns if 'Bezug' in c][0])
+                    col_einspeisung = next((c for c in df_everhome.columns if 'Differenz Einspeisung' in c), [c for c in df_everhome.columns if 'Einspeisung' in c][0])
 
                     df_everhome['Datetime'] = pd.to_datetime(df_everhome['Datum'] + ' ' + df_everhome['Uhrzeit'], format='%d.%m.%Y %H:%M:%S', errors='coerce')
                     df_everhome['Datum'] = df_everhome['Datetime'].dt.date
@@ -363,8 +364,8 @@ else:
             y=chart_df['Gesamtverbrauch_Wh']/1000,
             name='Gesamtverbrauch',
             mode='lines',
-            line=dict(color='rgba(0,0,0,0)'), # Macht die Linie unsichtbar
-            showlegend=False,                 # Versteckt den Eintrag in der Legende
+            line=dict(color='rgba(0,0,0,0)'),
+            showlegend=False,
             hovertemplate='%{y:.2f} kWh'
         ))
 
