@@ -52,7 +52,6 @@ if file_smiles or file_everhome:
                     file_everhome.seek(0)
                     df_everhome = pd.read_csv(file_everhome, sep=None, engine='python')
                     
-                    # Korrigierte, robuste Spaltensuche für Differenz-Werte
                     col_bezug = next((c for c in df_everhome.columns if 'Differenz Bezug' in c), [c for c in df_everhome.columns if 'Bezug' in c][0])
                     col_einspeisung = next((c for c in df_everhome.columns if 'Differenz Einspeisung' in c), [c for c in df_everhome.columns if 'Einspeisung' in c][0])
 
@@ -449,3 +448,55 @@ else:
                 st.info(f"Es fehlen noch **{rest:.2f} €**, bis sich die Anlage vollständig bezahlt gemacht hat.")
         else:
             st.info("Trage links in der Seitenleiste deine Anschaffungskosten (> 0 €) ein, um den Fortschritt zu sehen.")
+
+        # ==========================================
+        # NEU: SPEICHER-SIMULATOR
+        # ==========================================
+        st.markdown("---")
+        st.header("🔋 Batterie-Speicher Simulator (AC)")
+        st.markdown("Berechnet den potenziellen Nutzen eines Speichers basierend auf den exakten Daten des oben ausgewählten Zeitraums.")
+        
+        col_sim1, col_sim2, col_sim3 = st.columns(3)
+        with col_sim1:
+            speicher_kapazitaet_wh = st.number_input("Kapazität (Wh)", value=1600, step=100, help="Nettokapazität des Speichers in Wattstunden.")
+        with col_sim2:
+            speicher_preis = st.number_input("Speicher Preis (€)", value=700.0, step=50.0, help="Anschaffungskosten für den Speicher.")
+        with col_sim3:
+            speicher_effizienz = st.number_input("Effizienz (0.1 - 1.0)", value=0.85, min_value=0.1, max_value=1.0, step=0.05, help="Berücksichtigt Umwandlungs- und Ladeverluste (< 1.0).")
+            
+        st.caption("Hinweis: Das Modell nutzt eine vereinfachte Tagesbetrachtung. Es wird angenommen, dass der Speicher pro Tag den Überschuss bis zu seiner Maximalkapazität aufnehmen kann und nachts mit maximal 800W zur Deckung des Netzbezugs entladen wird. (1 Vollzyklus pro Tag)")
+
+        # Simulator Berechnung auf Basis des ausgewählten Zeitraums (filtered_df)
+        sim_df = filtered_df.copy()
+        
+        # 1. Speicher laden: Min(Tägliche Einspeisung, Speicherkapazität)
+        sim_df['Akku_Ladung_Wh'] = sim_df['Einspeisung_Wh'].apply(lambda x: min(x, speicher_kapazitaet_wh))
+        
+        # 2. Speicher entladen: Min(Geladene Energie * Effizienz, Tatsächlicher Netzbezug)
+        sim_df['Akku_Entladung_Wh'] = sim_df.apply(lambda row: min(row['Akku_Ladung_Wh'] * speicher_effizienz, row['Netzbezug_Wh']), axis=1)
+        
+        total_akku_entladung = sim_df['Akku_Entladung_Wh'].sum()
+        akku_ersparnis_period = (total_akku_entladung / 1000) * (strompreis_ct / 100)
+        
+        days_in_period = (end_date - start_date).days + 1
+        
+        if days_in_period > 0:
+            yearly_akku_ersparnis = (akku_ersparnis_period / days_in_period) * 365
+            if yearly_akku_ersparnis > 0:
+                amortization_years = speicher_preis / yearly_akku_ersparnis
+            else:
+                amortization_years = 0
+                
+            col_res1, col_res2, col_res3 = st.columns(3)
+            col_res1.metric(f"Zusätzliche Ersparnis im Zeitraum ({days_in_period} Tage)", f"{akku_ersparnis_period:.2f} €", f"{total_akku_entladung/1000:.1f} kWh genutzt")
+            col_res2.metric("Prognostizierte Ersparnis / Jahr", f"{yearly_akku_ersparnis:.2f} €")
+            
+            if amortization_years > 0:
+                col_res3.metric("Amortisationsdauer (Speicher)", f"{amortization_years:.1f} Jahre")
+            else:
+                col_res3.metric("Amortisationsdauer (Speicher)", "Nie")
+                
+            # Neue theoretische Autarkie berechnen
+            theoretischer_netzbezug = total_bezug - total_akku_entladung
+            neue_autarkie = ((total_verbrauch - theoretischer_netzbezug) / total_verbrauch * 100) if total_verbrauch > 0 else 0
+            st.info(f"💡 Mit diesem Speicher würde dein **Autarkiegrad** im ausgewählten Zeitraum von **{autarkie:.1f}%** auf **{neue_autarkie:.1f}%** steigen.")
