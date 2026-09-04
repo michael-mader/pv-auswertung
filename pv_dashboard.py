@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import datetime
+import re
 from pymongo import MongoClient, UpdateOne
 
 st.set_page_config(page_title="PV & Stromverbrauch Dashboard", layout="wide")
@@ -145,72 +146,68 @@ else:
     min_date = merged['Datum'].min().date()
     max_date = merged['Datum'].max().date()
 
-    if "start_date" not in st.session_state:
-        st.session_state.start_date = min_date
-    if "end_date" not in st.session_state:
-        st.session_state.end_date = max_date
+    filter_mode = st.sidebar.radio("Eingabemodus", ["Schnellauswahl (Datadog-Style)", "Manuell (Kalender)"])
 
-    auswahl_optionen = [
-        "Manuell (Kalender nutzen)", 
-        "Gestern",
-        "Letzte 7 Tage", 
-        "Letzte 14 Tage", 
-        "Letzte 30 Tage", 
-        "Aktueller Monat",
-        "Letzter Monat",
-        "Letzte 3 Monate",
-        "Gesamter Zeitraum"
-    ]
-    
-    quick_select = st.sidebar.selectbox("Schnellauswahl", auswahl_optionen, index=4)
+    if filter_mode == "Schnellauswahl (Datadog-Style)":
+        dd_input = st.sidebar.text_input(
+            "Zeitraum eingeben:", 
+            value="30d", 
+            help="Erlaubt: d (Tage), w (Wochen), mo (Monate), y (Jahre). Z.B. '7d', '3w', '6mo', '1y' oder 'all'"
+        )
+        
+        dd_clean = dd_input.strip().lower()
+        if dd_clean == 'all':
+            start_date = min_date
+            end_date = max_date
+            st.sidebar.caption(f"Gefiltert: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}")
+        else:
+            # Sucht z.B. nach "14d", "3w", "6mo", "1y"
+            match = re.match(r'^(\d+)\s*(d|w|mo|y)$', dd_clean)
+            
+            if match:
+                val = int(match.group(1))
+                unit = match.group(2)
+                
+                if unit == 'd':
+                    calc_start = max_date - datetime.timedelta(days=val)
+                elif unit == 'w':
+                    calc_start = max_date - datetime.timedelta(weeks=val)
+                elif unit == 'mo':
+                    calc_start = (pd.to_datetime(max_date) - pd.DateOffset(months=val)).date()
+                elif unit == 'y':
+                    calc_start = (pd.to_datetime(max_date) - pd.DateOffset(years=val)).date()
+                
+                start_date = max(min_date, calc_start)
+                end_date = max_date
+                
+                st.sidebar.caption(f"Gefiltert: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}")
+            else:
+                st.sidebar.error("⚠️ Format ungültig. Nutze 'd', 'w', 'mo', 'y' oder 'all'.")
+                start_date = min_date
+                end_date = max_date
+            
+    else:
+        if "start_date" not in st.session_state:
+            st.session_state.start_date = max(min_date, max_date - datetime.timedelta(days=30))
+        if "end_date" not in st.session_state:
+            st.session_state.end_date = max_date
 
-    if quick_select == "Gestern":
-        gestern = max_date - datetime.timedelta(days=1)
-        st.session_state.start_date = max(min_date, gestern)
-        st.session_state.end_date = max(min_date, gestern) 
-    elif quick_select == "Letzte 7 Tage":
-        st.session_state.start_date = max(min_date, max_date - datetime.timedelta(days=6))
-        st.session_state.end_date = max_date
-    elif quick_select == "Letzte 14 Tage":
-        st.session_state.start_date = max(min_date, max_date - datetime.timedelta(days=13))
-        st.session_state.end_date = max_date
-    elif quick_select == "Letzte 30 Tage":
-        st.session_state.start_date = max(min_date, max_date - datetime.timedelta(days=29))
-        st.session_state.end_date = max_date
-    elif quick_select == "Aktueller Monat":
-        start_of_month = max_date.replace(day=1)
-        st.session_state.start_date = max(min_date, start_of_month)
-        st.session_state.end_date = max_date
-    elif quick_select == "Letzter Monat":
-        end_of_last_month = max_date.replace(day=1) - datetime.timedelta(days=1)
-        start_of_last_month = end_of_last_month.replace(day=1)
-        st.session_state.start_date = max(min_date, start_of_last_month)
-        st.session_state.end_date = min(max_date, end_of_last_month)
-    elif quick_select == "Letzte 3 Monate":
-        start_3_months = (pd.to_datetime(max_date) - pd.DateOffset(months=3)).date()
-        st.session_state.start_date = max(min_date, start_3_months)
-        st.session_state.end_date = max_date
-    elif quick_select == "Gesamter Zeitraum":
-        st.session_state.start_date = min_date
-        st.session_state.end_date = max_date
+        date_selection = st.sidebar.date_input(
+            "Datum auswählen",
+            value=(st.session_state.start_date, st.session_state.end_date),
+            min_value=min_date,
+            max_value=max_date
+        )
 
-    date_selection = st.sidebar.date_input(
-        "Datum auswählen",
-        value=(st.session_state.start_date, st.session_state.end_date),
-        min_value=min_date,
-        max_value=max_date,
-        disabled=(quick_select != "Manuell (Kalender nutzen)") 
-    )
-
-    if len(date_selection) == 2:
-        start_date, end_date = date_selection
-        if quick_select == "Manuell (Kalender nutzen)":
+        if len(date_selection) == 2:
+            start_date, end_date = date_selection
             st.session_state.start_date = start_date
             st.session_state.end_date = end_date
-    else:
-        start_date = date_selection[0]
-        end_date = date_selection[0]
+        else:
+            start_date = date_selection[0]
+            end_date = date_selection[0]
 
+    # Daten anhand des Modus filtern
     mask = (merged['Datum'].dt.date >= start_date) & (merged['Datum'].dt.date <= end_date)
     filtered_df = merged.loc[mask]
 
@@ -429,7 +426,6 @@ else:
         st.markdown("---")
         st.header("📅 Langzeit-Vergleich (Monate & Jahre)")
         
-        # Datengrundlage ist das gesamte Datenset (merged), nicht das gefilterte
         df_monthly = merged.copy()
         df_monthly['Jahr'] = df_monthly['Datum'].dt.year
         df_monthly['Monat'] = df_monthly['Datum'].dt.month
@@ -445,7 +441,6 @@ else:
         month_names = {1:"Januar", 2:"Februar", 3:"März", 4:"April", 5:"Mai", 6:"Juni", 
                        7:"Juli", 8:"August", 9:"September", 10:"Oktober", 11:"November", 12:"Dezember"}
         
-        # Generiere die Auswahlmöglichkeiten (z.B. "August 2026")
         available_months = monthly_agg.apply(lambda row: f"{month_names[int(row['Monat'])]} {int(row['Jahr'])}", axis=1).tolist()
         
         col_sel1, col_sel2 = st.columns([1, 3])
@@ -459,16 +454,13 @@ else:
             
             curr_m_data = monthly_agg[(monthly_agg['Jahr'] == sel_y) & (monthly_agg['Monat'] == sel_m)]
             
-            # Daten für Vormonat (MoM) berechnen
             prev_m = sel_m - 1 if sel_m > 1 else 12
             prev_m_y = sel_y if sel_m > 1 else sel_y - 1
             mom_data = monthly_agg[(monthly_agg['Jahr'] == prev_m_y) & (monthly_agg['Monat'] == prev_m)]
             
-            # Daten für Vorjahresmonat (YoY) berechnen
             prev_y = sel_y - 1
             yoy_data = monthly_agg[(monthly_agg['Jahr'] == prev_y) & (monthly_agg['Monat'] == sel_m)]
             
-            # Hilfsfunktionen
             def get_delta_pct(curr, prev):
                 if prev is None or prev.empty or curr is None or curr.empty:
                     return None
@@ -480,7 +472,6 @@ else:
             def get_val(df_row, col):
                 return df_row[col].iloc[0] / 1000 if not df_row.empty else 0
 
-            # Werte extrahieren
             pv_curr = get_val(curr_m_data, 'PV_Erzeugung_Wh')
             pv_mom_pct = get_delta_pct(curr_m_data['PV_Erzeugung_Wh'], mom_data['PV_Erzeugung_Wh'])
             pv_yoy_pct = get_delta_pct(curr_m_data['PV_Erzeugung_Wh'], yoy_data['PV_Erzeugung_Wh'])
@@ -493,7 +484,6 @@ else:
             eigen_mom_pct = get_delta_pct(curr_m_data['Eigenverbrauch_Wh'], mom_data['Eigenverbrauch_Wh'])
             eigen_yoy_pct = get_delta_pct(curr_m_data['Eigenverbrauch_Wh'], yoy_data['Eigenverbrauch_Wh'])
             
-            # Darstellung Metriken
             st.markdown(f"#### Vergleich zum Vormonat (MoM) — {month_names[prev_m]} {prev_m_y}")
             c1, c2, c3 = st.columns(3)
             c1.metric("PV-Erzeugung", f"{pv_curr:.1f} kWh", f"{pv_mom_pct:.1f} %" if pv_mom_pct is not None else None)
@@ -506,7 +496,6 @@ else:
             c5.metric("Netzbezug", f"{netz_curr:.1f} kWh", f"{netz_yoy_pct:.1f} %" if netz_yoy_pct is not None else None, delta_color="inverse")
             c6.metric("Eigenverbrauch", f"{eigen_curr:.1f} kWh", f"{eigen_yoy_pct:.1f} %" if eigen_yoy_pct is not None else None)
             
-            # Chart für YoY (Alle Jahre nebeneinander)
             st.markdown("<br>#### Jahresverlauf im direkten Vergleich", unsafe_allow_html=True)
             compare_metric = st.radio("Metrik für das Diagramm wählen:", ["PV-Erzeugung", "Netzbezug", "Eigenverbrauch", "Gesamtverbrauch"], horizontal=True)
             
@@ -524,7 +513,6 @@ else:
             
             for i, jahr in enumerate(jahre):
                 df_j = monthly_agg[monthly_agg['Jahr'] == jahr].sort_values('Monat')
-                # Auffüllen fehlender Monate mit 0, damit die X-Achse immer alle 12 Monate perfekt ausrichtet
                 df_j_full = pd.DataFrame({'Monat': range(1, 13)})
                 df_j_full = df_j_full.merge(df_j, on='Monat', how='left').fillna(0)
                 
@@ -546,7 +534,6 @@ else:
                 margin=dict(l=0, r=0, t=40, b=0)
             )
             st.plotly_chart(fig_yoy, use_container_width=True)
-
 
         # ==========================================
         # AMORTISATION GANZ UNTEN
@@ -592,13 +579,9 @@ else:
             
         st.caption("Hinweis: Das Modell nutzt eine vereinfachte Tagesbetrachtung. Es wird angenommen, dass der Speicher pro Tag den Überschuss bis zu seiner Maximalkapazität aufnehmen kann und nachts mit maximal 800W zur Deckung des Netzbezugs entladen wird. (1 Vollzyklus pro Tag)")
 
-        # Simulator Berechnung auf Basis des ausgewählten Zeitraums (filtered_df)
         sim_df = filtered_df.copy()
         
-        # 1. Speicher laden: Min(Tägliche Einspeisung, Speicherkapazität)
         sim_df['Akku_Ladung_Wh'] = sim_df['Einspeisung_Wh'].apply(lambda x: min(x, speicher_kapazitaet_wh))
-        
-        # 2. Speicher entladen: Min(Geladene Energie * Effizienz, Tatsächlicher Netzbezug)
         sim_df['Akku_Entladung_Wh'] = sim_df.apply(lambda row: min(row['Akku_Ladung_Wh'] * speicher_effizienz, row['Netzbezug_Wh']), axis=1)
         
         total_akku_entladung = sim_df['Akku_Entladung_Wh'].sum()
@@ -622,7 +605,6 @@ else:
             else:
                 col_res3.metric("Amortisationsdauer (Speicher)", "Nie")
                 
-            # Neue theoretische Autarkie berechnen
             theoretischer_netzbezug = total_bezug - total_akku_entladung
             neue_autarkie = ((total_verbrauch - theoretischer_netzbezug) / total_verbrauch * 100) if total_verbrauch > 0 else 0
             st.info(f"💡 Mit diesem Speicher würde dein **Autarkiegrad** im ausgewählten Zeitraum von **{autarkie:.1f}%** auf **{neue_autarkie:.1f}%** steigen.")
