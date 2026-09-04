@@ -422,6 +422,132 @@ else:
             display_df['Datum'] = display_df['Datum'].dt.strftime('%d.%m.%Y')
             st.dataframe(display_df, use_container_width=True)
 
+
+        # ==========================================
+        # NEU: LANGZEIT-VERGLEICH (MoM & YoY)
+        # ==========================================
+        st.markdown("---")
+        st.header("📅 Langzeit-Vergleich (Monate & Jahre)")
+        
+        # Datengrundlage ist das gesamte Datenset (merged), nicht das gefilterte
+        df_monthly = merged.copy()
+        df_monthly['Jahr'] = df_monthly['Datum'].dt.year
+        df_monthly['Monat'] = df_monthly['Datum'].dt.month
+        
+        monthly_agg = df_monthly.groupby(['Jahr', 'Monat']).agg({
+            'PV_Erzeugung_Wh': 'sum',
+            'Netzbezug_Wh': 'sum',
+            'Eigenverbrauch_Wh': 'sum',
+            'Gesamtverbrauch_Wh': 'sum',
+            'Einspeisung_Wh': 'sum'
+        }).reset_index()
+        
+        month_names = {1:"Januar", 2:"Februar", 3:"März", 4:"April", 5:"Mai", 6:"Juni", 
+                       7:"Juli", 8:"August", 9:"September", 10:"Oktober", 11:"November", 12:"Dezember"}
+        
+        # Generiere die Auswahlmöglichkeiten (z.B. "August 2026")
+        available_months = monthly_agg.apply(lambda row: f"{month_names[int(row['Monat'])]} {int(row['Jahr'])}", axis=1).tolist()
+        
+        col_sel1, col_sel2 = st.columns([1, 3])
+        with col_sel1:
+            selected_month_str = st.selectbox("Vergleichsmonat wählen:", available_months, index=len(available_months)-1)
+        
+        if selected_month_str:
+            sel_m_name, sel_y_str = selected_month_str.split(" ")
+            sel_y = int(sel_y_str)
+            sel_m = list(month_names.keys())[list(month_names.values()).index(sel_m_name)]
+            
+            curr_m_data = monthly_agg[(monthly_agg['Jahr'] == sel_y) & (monthly_agg['Monat'] == sel_m)]
+            
+            # Daten für Vormonat (MoM) berechnen
+            prev_m = sel_m - 1 if sel_m > 1 else 12
+            prev_m_y = sel_y if sel_m > 1 else sel_y - 1
+            mom_data = monthly_agg[(monthly_agg['Jahr'] == prev_m_y) & (monthly_agg['Monat'] == prev_m)]
+            
+            # Daten für Vorjahresmonat (YoY) berechnen
+            prev_y = sel_y - 1
+            yoy_data = monthly_agg[(monthly_agg['Jahr'] == prev_y) & (monthly_agg['Monat'] == sel_m)]
+            
+            # Hilfsfunktionen
+            def get_delta_pct(curr, prev):
+                if prev is None or prev.empty or curr is None or curr.empty:
+                    return None
+                val_c = curr.iloc[0]
+                val_p = prev.iloc[0]
+                if val_p == 0: return None
+                return ((val_c - val_p) / val_p) * 100
+
+            def get_val(df_row, col):
+                return df_row[col].iloc[0] / 1000 if not df_row.empty else 0
+
+            # Werte extrahieren
+            pv_curr = get_val(curr_m_data, 'PV_Erzeugung_Wh')
+            pv_mom_pct = get_delta_pct(curr_m_data['PV_Erzeugung_Wh'], mom_data['PV_Erzeugung_Wh'])
+            pv_yoy_pct = get_delta_pct(curr_m_data['PV_Erzeugung_Wh'], yoy_data['PV_Erzeugung_Wh'])
+            
+            netz_curr = get_val(curr_m_data, 'Netzbezug_Wh')
+            netz_mom_pct = get_delta_pct(curr_m_data['Netzbezug_Wh'], mom_data['Netzbezug_Wh'])
+            netz_yoy_pct = get_delta_pct(curr_m_data['Netzbezug_Wh'], yoy_data['Netzbezug_Wh'])
+
+            eigen_curr = get_val(curr_m_data, 'Eigenverbrauch_Wh')
+            eigen_mom_pct = get_delta_pct(curr_m_data['Eigenverbrauch_Wh'], mom_data['Eigenverbrauch_Wh'])
+            eigen_yoy_pct = get_delta_pct(curr_m_data['Eigenverbrauch_Wh'], yoy_data['Eigenverbrauch_Wh'])
+            
+            # Darstellung Metriken
+            st.markdown(f"#### Vergleich zum Vormonat (MoM) — {month_names[prev_m]} {prev_m_y}")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("PV-Erzeugung", f"{pv_curr:.1f} kWh", f"{pv_mom_pct:.1f} %" if pv_mom_pct is not None else None)
+            c2.metric("Netzbezug", f"{netz_curr:.1f} kWh", f"{netz_mom_pct:.1f} %" if netz_mom_pct is not None else None, delta_color="inverse")
+            c3.metric("Eigenverbrauch", f"{eigen_curr:.1f} kWh", f"{eigen_mom_pct:.1f} %" if eigen_mom_pct is not None else None)
+            
+            st.markdown(f"#### Vergleich zum Vorjahresmonat (YoY) — {month_names[sel_m]} {prev_y}")
+            c4, c5, c6 = st.columns(3)
+            c4.metric("PV-Erzeugung", f"{pv_curr:.1f} kWh", f"{pv_yoy_pct:.1f} %" if pv_yoy_pct is not None else None)
+            c5.metric("Netzbezug", f"{netz_curr:.1f} kWh", f"{netz_yoy_pct:.1f} %" if netz_yoy_pct is not None else None, delta_color="inverse")
+            c6.metric("Eigenverbrauch", f"{eigen_curr:.1f} kWh", f"{eigen_yoy_pct:.1f} %" if eigen_yoy_pct is not None else None)
+            
+            # Chart für YoY (Alle Jahre nebeneinander)
+            st.markdown("<br>#### Jahresverlauf im direkten Vergleich", unsafe_allow_html=True)
+            compare_metric = st.radio("Metrik für das Diagramm wählen:", ["PV-Erzeugung", "Netzbezug", "Eigenverbrauch", "Gesamtverbrauch"], horizontal=True)
+            
+            metric_map = {
+                "PV-Erzeugung": "PV_Erzeugung_Wh",
+                "Netzbezug": "Netzbezug_Wh",
+                "Eigenverbrauch": "Eigenverbrauch_Wh",
+                "Gesamtverbrauch": "Gesamtverbrauch_Wh"
+            }
+            y_col = metric_map[compare_metric]
+            
+            fig_yoy = go.Figure()
+            jahre = sorted(monthly_agg['Jahr'].unique())
+            colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
+            
+            for i, jahr in enumerate(jahre):
+                df_j = monthly_agg[monthly_agg['Jahr'] == jahr].sort_values('Monat')
+                # Auffüllen fehlender Monate mit 0, damit die X-Achse immer alle 12 Monate perfekt ausrichtet
+                df_j_full = pd.DataFrame({'Monat': range(1, 13)})
+                df_j_full = df_j_full.merge(df_j, on='Monat', how='left').fillna(0)
+                
+                short_month_names = {1:"Jan", 2:"Feb", 3:"Mär", 4:"Apr", 5:"Mai", 6:"Jun", 
+                                     7:"Jul", 8:"Aug", 9:"Sep", 10:"Okt", 11:"Nov", 12:"Dez"}
+                
+                fig_yoy.add_trace(go.Bar(
+                    x=[short_month_names[m] for m in df_j_full['Monat']],
+                    y=df_j_full[y_col] / 1000,
+                    name=str(jahr),
+                    marker_color=colors[i % len(colors)]
+                ))
+                
+            fig_yoy.update_layout(
+                barmode='group',
+                yaxis_title=f"{compare_metric} (kWh)",
+                hovermode='x unified',
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                margin=dict(l=0, r=0, t=40, b=0)
+            )
+            st.plotly_chart(fig_yoy, use_container_width=True)
+
+
         # ==========================================
         # AMORTISATION GANZ UNTEN
         # ==========================================
