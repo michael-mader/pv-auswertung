@@ -146,68 +146,97 @@ else:
     min_date = merged['Datum'].min().date()
     max_date = merged['Datum'].max().date()
 
+    if "shift_multiplier" not in st.session_state:
+        st.session_state.shift_multiplier = 0
+    if "last_dd_input" not in st.session_state:
+        st.session_state.last_dd_input = "30d"
+
     filter_mode = st.sidebar.radio("Eingabemodus", ["Schnellauswahl (Datadog-Style)", "Manuell (Kalender)"])
 
     if filter_mode == "Schnellauswahl (Datadog-Style)":
         dd_input = st.sidebar.text_input(
             "Zeitraum eingeben:", 
-            value="30d", 
+            value=st.session_state.last_dd_input, 
             help="Erlaubt: d (Tage), w (Wochen), mo (Monate), y (Jahre). Z.B. '7d', '3w', '6mo', '1y' oder 'all'"
         )
         
+        # Reset multiplier if the user types a new timeframe
+        if dd_input != st.session_state.last_dd_input:
+            st.session_state.shift_multiplier = 0
+            st.session_state.last_dd_input = dd_input
+            
         dd_clean = dd_input.strip().lower()
+
+        # Steuerungselemente (Zurück/Vor)
+        col_l, col_m, col_r = st.sidebar.columns([1, 2, 1])
+        with col_l:
+            if st.button("◀", help="Zeitraum zurückschieben"):
+                st.session_state.shift_multiplier += 1
+        with col_m:
+            if st.session_state.shift_multiplier > 0:
+                st.markdown(f"<div style='text-align:center; margin-top:5px;'><b>-{st.session_state.shift_multiplier} Zeitraum</b></div>", unsafe_allow_html=True)
+            else:
+                st.markdown("<div style='text-align:center; margin-top:5px;'><b>Aktuell</b></div>", unsafe_allow_html=True)
+        with col_r:
+            if st.button("▶", help="Zeitraum vorschieben", disabled=(st.session_state.shift_multiplier <= 0)):
+                st.session_state.shift_multiplier = max(0, st.session_state.shift_multiplier - 1)
+        
+        shift = st.session_state.shift_multiplier
+
         if dd_clean == 'all':
             start_date = min_date
             end_date = max_date
             st.sidebar.caption(f"Gefiltert: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}")
         else:
-            # Sucht z.B. nach "14d", "3w", "6mo", "1y"
             match = re.match(r'^(\d+)\s*(d|w|mo|y)$', dd_clean)
-            
             if match:
                 val = int(match.group(1))
                 unit = match.group(2)
                 
                 if unit == 'd':
-                    calc_start = max_date - datetime.timedelta(days=val)
+                    calc_end = max_date - datetime.timedelta(days=val * shift)
+                    calc_start = max_date - datetime.timedelta(days=val * (shift + 1))
                 elif unit == 'w':
-                    calc_start = max_date - datetime.timedelta(weeks=val)
+                    calc_end = max_date - datetime.timedelta(weeks=val * shift)
+                    calc_start = max_date - datetime.timedelta(weeks=val * (shift + 1))
                 elif unit == 'mo':
-                    calc_start = (pd.to_datetime(max_date) - pd.DateOffset(months=val)).date()
+                    calc_end = (pd.to_datetime(max_date) - pd.DateOffset(months=val * shift)).date()
+                    calc_start = (pd.to_datetime(max_date) - pd.DateOffset(months=val * (shift + 1))).date()
                 elif unit == 'y':
-                    calc_start = (pd.to_datetime(max_date) - pd.DateOffset(years=val)).date()
+                    calc_end = (pd.to_datetime(max_date) - pd.DateOffset(years=val * shift)).date()
+                    calc_start = (pd.to_datetime(max_date) - pd.DateOffset(years=val * (shift + 1))).date()
                 
+                # Datums-Begrenzungen sichern
                 start_date = max(min_date, calc_start)
-                end_date = max_date
+                end_date = min(max_date, calc_end)
                 
                 st.sidebar.caption(f"Gefiltert: {start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}")
             else:
                 st.sidebar.error("⚠️ Format ungültig. Nutze 'd', 'w', 'mo', 'y' oder 'all'.")
                 start_date = min_date
                 end_date = max_date
-            
+                
     else:
-        if "start_date" not in st.session_state:
-            st.session_state.start_date = max(min_date, max_date - datetime.timedelta(days=30))
-        if "end_date" not in st.session_state:
-            st.session_state.end_date = max_date
+        if "start_date_cal" not in st.session_state:
+            st.session_state.start_date_cal = max(min_date, max_date - datetime.timedelta(days=30))
+        if "end_date_cal" not in st.session_state:
+            st.session_state.end_date_cal = max_date
 
         date_selection = st.sidebar.date_input(
             "Datum auswählen",
-            value=(st.session_state.start_date, st.session_state.end_date),
+            value=(st.session_state.start_date_cal, st.session_state.end_date_cal),
             min_value=min_date,
             max_value=max_date
         )
 
         if len(date_selection) == 2:
             start_date, end_date = date_selection
-            st.session_state.start_date = start_date
-            st.session_state.end_date = end_date
+            st.session_state.start_date_cal = start_date
+            st.session_state.end_date_cal = end_date
         else:
             start_date = date_selection[0]
             end_date = date_selection[0]
 
-    # Daten anhand des Modus filtern
     mask = (merged['Datum'].dt.date >= start_date) & (merged['Datum'].dt.date <= end_date)
     filtered_df = merged.loc[mask]
 
