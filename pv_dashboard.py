@@ -31,6 +31,7 @@ if file_smiles or file_everhome:
         with st.spinner("Daten werden verarbeitet und in MongoDB gespeichert..."):
             try:
                 upload_dict = {}
+                today = datetime.date.today()
 
                 # 1. S-Miles verarbeiten
                 if file_smiles:
@@ -39,6 +40,9 @@ if file_smiles or file_everhome:
                     df_smiles = df_smiles.iloc[:, [0, 1]]
                     df_smiles.columns = ['Datum', 'Ertrag_Wh']
                     df_smiles['Datum'] = pd.to_datetime(df_smiles['Datum'], errors='coerce').dt.date
+                    
+                    # NEU: Aktuellen (unvollständigen) Tag komplett verwerfen
+                    df_smiles = df_smiles[df_smiles['Datum'] < today]
                     
                     for _, row in df_smiles.dropna(subset=['Datum']).iterrows():
                         d_str = row['Datum'].strftime('%Y-%m-%d')
@@ -58,6 +62,13 @@ if file_smiles or file_everhome:
 
                     df_everhome['Datetime'] = pd.to_datetime(df_everhome['Datum'] + ' ' + df_everhome['Uhrzeit'], format='%d.%m.%Y %H:%M:%S', errors='coerce')
                     df_everhome['Datum'] = df_everhome['Datetime'].dt.date
+                    
+                    # NEU: Fehlerhafte negative Differenzen (z.B. durch Zähler-Aussetzer/Resets) zwingend auf 0 setzen
+                    df_everhome[col_bezug] = pd.to_numeric(df_everhome[col_bezug], errors='coerce').fillna(0).clip(lower=0)
+                    df_everhome[col_einspeisung] = pd.to_numeric(df_everhome[col_einspeisung], errors='coerce').fillna(0).clip(lower=0)
+
+                    # NEU: Aktuellen (unvollständigen) Tag komplett verwerfen
+                    df_everhome = df_everhome[df_everhome['Datum'] < today]
 
                     daily_everhome = df_everhome.groupby('Datum').agg({
                         col_bezug: 'sum',
@@ -160,14 +171,12 @@ else:
             help="Erlaubt: d (Tage), w (Wochen), mo (Monate), y (Jahre). Z.B. '7d', '3w', '6mo', '1y' oder 'all'"
         )
         
-        # Reset multiplier if the user types a new timeframe
         if dd_input != st.session_state.last_dd_input:
             st.session_state.shift_multiplier = 0
             st.session_state.last_dd_input = dd_input
             
         dd_clean = dd_input.strip().lower()
 
-        # Steuerungselemente (Zurück/Vor)
         col_l, col_m, col_r = st.sidebar.columns([1, 2, 1])
         with col_l:
             if st.button("◀", help="Zeitraum zurückschieben"):
@@ -206,7 +215,6 @@ else:
                     calc_end = (pd.to_datetime(max_date) - pd.DateOffset(years=val * shift)).date()
                     calc_start = (pd.to_datetime(max_date) - pd.DateOffset(years=val * (shift + 1))).date()
                 
-                # Datums-Begrenzungen sichern
                 start_date = max(min_date, calc_start)
                 end_date = min(max_date, calc_end)
                 
@@ -347,7 +355,6 @@ else:
 
         fig = go.Figure()
 
-        # 1. Positiver Balken: Eigenverbrauch (Grün)
         fig.add_trace(go.Bar(
             x=chart_df['Datum'],
             y=chart_df['Eigenverbrauch_Wh']/1000,
@@ -355,7 +362,6 @@ else:
             marker_color='green'
         ))
 
-        # 2. Positiver Balken (darauf gestapelt): Netzbezug (Orange)
         fig.add_trace(go.Bar(
             x=chart_df['Datum'],
             y=chart_df['Netzbezug_Wh']/1000,
@@ -363,7 +369,6 @@ else:
             marker_color='orange'
         ))
         
-        # 3. Negativer Balken (nach unten gestapelt): Einspeisung (Gold)
         fig.add_trace(go.Bar(
             x=chart_df['Datum'],
             y=-chart_df['Einspeisung_Wh']/1000,
@@ -373,7 +378,6 @@ else:
             hovertemplate='%{customdata:.2f} kWh' 
         ))
 
-        # 4. Linie: PV Erzeugung (Blau)
         fig.add_trace(go.Scatter(
             x=chart_df['Datum'],
             y=chart_df['PV_Erzeugung_Wh']/1000,
@@ -383,7 +387,6 @@ else:
             marker=dict(size=8)
         ))
 
-        # 5. Unsichtbarer Trace nur für den Hover-Tooltip: Gesamtverbrauch
         fig.add_trace(go.Scatter(
             x=chart_df['Datum'],
             y=chart_df['Gesamtverbrauch_Wh']/1000,
@@ -404,7 +407,6 @@ else:
         else:
             text_labels = chart_df['Autarkie_%'].apply(lambda x: f"<b>{x:.0f} %</b>" if x > 0 else "")
 
-        # Labels oben auf den positiven Balken
         fig.add_trace(go.Scatter(
             x=chart_df['Datum'],
             y=y_max,
@@ -415,7 +417,6 @@ else:
             hoverinfo='skip'
         ))
 
-        # Y-Achsen Skalierung berechnen
         max_total = chart_df['Gesamtverbrauch_Wh'].max()
         max_pv = chart_df['PV_Erzeugung_Wh'].max()
         graph_max_y = max(max_total, max_pv) / 1000 if not chart_df.empty else 1
